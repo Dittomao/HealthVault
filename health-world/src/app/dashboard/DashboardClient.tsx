@@ -62,47 +62,41 @@ export default function DashboardClient({ user }: { user: any }) {
 
       const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName)
 
-      const reader = new FileReader()
-      reader.readAsDataURL(file)
-      reader.onload = async () => {
-        try {
-          const base64Image = (reader.result as string).split(',')[1]
+      try {
+        const res = await fetch('/api/analyze-document', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileUrl: publicUrl, mimeType: file.type, mode })
+        })
 
-          const res = await fetch('/api/analyze-document', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ base64Image, mimeType: file.type, mode })
-          })
+        const aiData = await res.json()
+        if (aiData.error) throw new Error(aiData.error)
 
-          const aiData = await res.json()
-          if (aiData.error) throw new Error(aiData.error)
-
-          let extraData: any = {};
-          if (mode === 'bill') {
-            extraData = { flaggedCharges: aiData.flaggedCharges || [], costSavingTips: aiData.costSavingTips || [], followUp: aiData.followUp || null, totalAmount: aiData.totalAmount || 'N/A', items: aiData.items || [] };
-          } else if (mode === 'jargon') {
-            extraData = { whatIsThis: aiData.whatIsThis, oweMoney: aiData.oweMoney, deadline: aiData.deadline };
-          } else if (mode === 'report') {
-            extraData = { recommendedActions: aiData.recommendedActions || [], appointments: aiData.appointments || [] };
-          } else {
-            extraData = aiData.items || [];
-          }
-
-          await supabase.from('documents').insert({
-            user_id: user.id,
-            document_type: aiData.type || mode,
-            file_url: publicUrl,
-            ai_summary: aiData.summary || 'Summary unavailable',
-            flagged_charges: extraData
-          })
-
-          fetchData()
-        } catch (error: any) {
-          console.error('AI Analysis failed:', error)
-          alert(error.message || 'Analysis failed.')
-        } finally {
-          setIsUploading(false)
+        let extraData: any = {};
+        if (mode === 'bill') {
+          extraData = { flaggedCharges: aiData.flaggedCharges || [], costSavingTips: aiData.costSavingTips || [], followUp: aiData.followUp || null, totalAmount: aiData.totalAmount || 'N/A', items: aiData.items || [] };
+        } else if (mode === 'jargon') {
+          extraData = { whatIsThis: aiData.whatIsThis, oweMoney: aiData.oweMoney, deadline: aiData.deadline };
+        } else if (mode === 'report') {
+          extraData = { recommendedActions: aiData.recommendedActions || [], appointments: aiData.appointments || [] };
+        } else {
+          extraData = aiData.items || [];
         }
+
+        await supabase.from('documents').insert({
+          user_id: user.id,
+          document_type: aiData.type || mode,
+          file_url: publicUrl,
+          ai_summary: aiData.summary || 'Summary unavailable',
+          flagged_charges: extraData
+        })
+
+        fetchData()
+      } catch (error: any) {
+        console.error('AI Analysis failed:', error)
+        alert(error.message || 'Analysis failed.')
+      } finally {
+        setIsUploading(false)
       }
     } catch (error: any) {
       console.error('Upload failed:', error)

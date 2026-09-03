@@ -1,6 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextResponse } from 'next/server';
 
+export const maxDuration = 60;
+
 const MODELS_TO_TRY = [
   "gemini-3.5-flash",
   "gemini-2.5-flash",
@@ -145,9 +147,23 @@ export async function POST(req: Request) {
 
     const genAI = new GoogleGenerativeAI(apiKey);
 
-    const { base64Image, mimeType, mode } = await req.json();
+    const { base64Image, mimeType, mode, fileUrl } = await req.json();
 
-    if (!base64Image) {
+    let finalBase64 = base64Image;
+
+    if (!finalBase64 && fileUrl) {
+      try {
+        const response = await fetch(fileUrl);
+        if (!response.ok) throw new Error("Failed to fetch image from URL");
+        const arrayBuffer = await response.arrayBuffer();
+        finalBase64 = Buffer.from(arrayBuffer).toString('base64');
+      } catch (e) {
+        console.error("Error fetching fileUrl:", e);
+        return NextResponse.json({ error: "Failed to process the uploaded file for analysis." }, { status: 400 });
+      }
+    }
+
+    if (!finalBase64) {
       return NextResponse.json({ error: "No image data provided." }, { status: 400 });
     }
 
@@ -164,7 +180,7 @@ export async function POST(req: Request) {
     }
 
     const imageParts = [
-      { inlineData: { data: base64Image, mimeType: resolvedMimeType } }
+      { inlineData: { data: finalBase64, mimeType: resolvedMimeType } }
     ];
 
     let lastError: any = null;
