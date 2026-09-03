@@ -167,7 +167,7 @@ export async function POST(req: Request) {
       { inlineData: { data: base64Image, mimeType: resolvedMimeType } }
     ];
 
-    let lastError: Error | null = null;
+    let lastError: any = null;
 
     for (const modelName of MODELS_TO_TRY) {
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
