@@ -1,6 +1,1 @@
 
-1. **The Architecture Stack:** It's built on a modern **Next.js (App Router)** foundation. **Supabase** acts as the secure PostgreSQL database and file storage engine. **Vercel** hosts the serverless backend, and **Google Gemini** powers the intelligence.
-2. **The "Payload" Fix:** As explained in the architecture diagram in the document, we bypass rigid Vercel payload limits by uploading files straight to Supabase Storage first, then passing just the small URL to the Vercel backend. Vercel downloads it server-side and streams it to Gemini.
-3. **The Database:** Supabase relies on strict Row Level Security (RLS) to ensure users can only ever query documents linked directly to their authenticated `user_id`. The database leans heavily into a `JSONB` column structure to cleanly store dynamic AI outputs (like cost-saving tips vs. recommended actions) without cluttering the table with empty columns.
-4. **The AI Engine:** The Next.js API uses highly-engineered context prompts depending on the user's action (Financial Auditor for bills, Triage Nurse for reports, etc.). It forces the Gemini AI to respond in strict JSON, and even has an automated fallback loop to switch to older Gemini models if the primary one hits rate limits.
-
