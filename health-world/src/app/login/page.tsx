@@ -22,7 +22,7 @@ export default function LoginPage() {
 
     try {
       if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
@@ -32,6 +32,18 @@ export default function LoginPage() {
           }
         })
         if (error) throw error
+        
+        if (data?.user && data?.user?.identities?.length === 0) {
+           setError('An account with this email already exists. Please sign in instead.')
+           return
+        }
+
+        if (data?.session === null) {
+          alert('Sign up successful! Please check your email to verify your account before logging in.')
+          setMode('login')
+          return
+        }
+        
         router.push('/dashboard')
       } else {
         const { error } = await supabase.auth.signInWithPassword({
