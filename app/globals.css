@@ -19,3 +19,106 @@ body {
   min-height: 100vh;
   margin: 0;
 }
+
+.btn-container {
+  --btn-color: #1C1C1C;
+  --corner-color: #0003;
+  --corner-dist: 24px;
+  --corner-multiplier: 1.5;
+  --timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration: 400ms;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 10px auto;
+  z-index: 10;
+}
+
+.btn {
+  background: var(--btn-color);
+  color: white;
+  padding: 16px 32px;
+  border-radius: 9999px;
+  border: none;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+  transition: transform var(--duration) var(--timing-function), filter var(--duration) ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-drawer {
+  position: absolute;
+  background: white;
+  color: #1C1C1C;
+  padding: 8px 16px;
+  border-radius: 9999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  z-index: 1;
+  opacity: 0;
+  transition: transform var(--duration) var(--timing-function), opacity var(--duration) ease;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.btn-corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  fill: var(--btn-color);
+  z-index: 0;
+  transition: transform var(--duration) var(--timing-function), opacity var(--duration) ease;
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* Corner positions */
+.btn-corner:nth-of-type(1) { top: 10px; left: 10px; transform: rotate(0deg); }
+.btn-corner:nth-of-type(2) { top: 10px; right: 10px; transform: rotate(90deg); }
+.btn-corner:nth-of-type(3) { bottom: 10px; right: 10px; transform: rotate(180deg); }
+.btn-corner:nth-of-type(4) { bottom: 10px; left: 10px; transform: rotate(270deg); }
+
+/* Hover states */
+.btn-container:hover .btn,
+.btn-container:focus-within .btn {
+  transform: scale(1.05);
+  filter: drop-shadow(0 16px 16px #0002);
+}
+
+.btn-container:hover .transition-top,
+.btn-container:focus-within .transition-top {
+  transform: translateY(-40px) rotateZ(4deg);
+  opacity: 1;
+}
+
+.btn-container:hover .transition-bottom,
+.btn-container:focus-within .transition-bottom {
+  transform: translateY(40px) rotateZ(-4deg);
+  opacity: 1;
+}
+
+/* Corner transforms out */
+.btn-container:hover .btn-corner:nth-of-type(1) {
+  opacity: 1;
+  transform: translate(calc(-1 * var(--corner-dist)), calc(-1 * var(--corner-dist))) rotate(0deg);
+}
+.btn-container:hover .btn-corner:nth-of-type(2) {
+  opacity: 1;
+  transform: translate(var(--corner-dist), calc(-1 * var(--corner-dist))) rotate(90deg);
+}
+.btn-container:hover .btn-corner:nth-of-type(3) {
+  opacity: 1;
+  transform: translate(var(--corner-dist), var(--corner-dist)) rotate(180deg);
+}
+.btn-container:hover .btn-corner:nth-of-type(4) {
+  opacity: 1;
+  transform: translate(calc(-1 * var(--corner-dist)), var(--corner-dist)) rotate(270deg);
+}
+

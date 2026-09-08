@@ -50,14 +50,29 @@ export default function Home() {
           Vault
         </h1>
         
-        <p className="max-w-xl text-lg md:text-xl text-gray-700 mb-10 leading-relaxed font-medium">
+        <p className="max-w-xl text-lg md:text-xl text-gray-700 mb-6 leading-relaxed font-medium">
           Analyze, manage, convert, and protect your health documents entirely in your browser. No jargon, no complicated forms, and no limits.
         </p>
         
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12 w-full">
-          <Link href="/dashboard" className="bg-[#4F8EF7] text-white px-8 py-3.5 rounded-full text-base font-semibold shadow-md hover:bg-blue-500 transition-colors flex items-center justify-center gap-2 w-full sm:w-auto">
-            Open the tools
-            <ArrowRight className="w-4 h-4" />
+        <p className="text-gray-900 font-semibold text-lg mb-8">
+          The one stop solution for your health related needs
+        </p>
+
+        <div className="mb-12">
+          <Link href="/dashboard" className="btn-container group block">
+            <div className="btn-drawer transition-top">🪄 Let's go!</div>
+            
+            <button className="btn">
+              <span className="btn-text">Get Started</span>
+              <ArrowRight className="w-4 h-4 ml-1" />
+            </button>
+            
+            <div className="btn-drawer transition-bottom">AI-powered</div>
+            
+            <svg className="btn-corner" viewBox="0 0 32 32"><path d="M32 0 Q0 0 0 32 L0 0 Z" /></svg>
+            <svg className="btn-corner" viewBox="0 0 32 32"><path d="M32 0 Q0 0 0 32 L0 0 Z" /></svg>
+            <svg className="btn-corner" viewBox="0 0 32 32"><path d="M32 0 Q0 0 0 32 L0 0 Z" /></svg>
+            <svg className="btn-corner" viewBox="0 0 32 32"><path d="M32 0 Q0 0 0 32 L0 0 Z" /></svg>
           </Link>
         </div>
 
