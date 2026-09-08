@@ -4,9 +4,8 @@ import { NextResponse } from 'next/server';
 export const maxDuration = 60;
 
 const MODELS_TO_TRY = [
+  "gemini-3.6-flash",
   "gemini-3.5-flash",
-  "gemini-2.5-flash",
-  "gemini-flash-latest",
 ];
 
 const MAX_RETRIES = 2;
