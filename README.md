@@ -70,4 +70,3 @@ To bypass Vercel's strict 4.5 MB serverless payload limit for large medical PDFs
 
 ## 🔐 Security & Privacy
 HealthVault implements Supabase Row Level Security (RLS) to ensure HIPAA-level privacy concepts. Users can exclusively access their own medical data tied to their authenticated session ID. No sensitive API keys are exposed to the client browser.
-
