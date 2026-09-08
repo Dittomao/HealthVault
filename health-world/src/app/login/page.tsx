@@ -11,9 +11,38 @@ export default function LoginPage() {
   const [dob, setDob] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
+  const [mode, setMode] = useState<'login' | 'signup' | 'forgot_password'>('login')
   const router = useRouter()
   const supabase = createClient()
+
+  
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+    
+    try {
+      const res = await fetch('/api/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, dob, newPassword: password })
+      })
+      
+      const data = await res.json()
+      
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to reset password')
+      }
+      
+      alert('Password reset successful! You can now sign in with your new password.')
+      setMode('login')
+      setPassword('')
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -77,7 +106,7 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleAuth} className="space-y-4">
+        <form onSubmit={mode === 'forgot_password' ? handleResetPassword : handleAuth} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
@@ -90,7 +119,7 @@ export default function LoginPage() {
             />
           </div>
           
-          {mode === 'signup' && (
+          {(mode === 'signup' || mode === 'forgot_password') && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
               <input
@@ -100,12 +129,12 @@ export default function LoginPage() {
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all text-black"
                 required
               />
-              <p className="text-xs text-gray-500 mt-1">Used to verify your identity if you forget your password.</p>
+              <p className="text-xs text-gray-500 mt-1">{mode === 'forgot_password' ? 'Enter the exact Date of Birth you used during sign up.' : 'Used to verify your identity if you forget your password.'}</p>
             </div>
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{mode === 'forgot_password' ? 'New Password' : 'Password'}</label>
             <input
               type="password"
               value={password}
@@ -121,7 +150,7 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full bg-blue-600 text-white rounded-xl py-3 font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 mt-4 disabled:opacity-50"
           >
-            {loading ? 'Processing...' : (mode === 'login' ? 'Sign In' : 'Create Account')}
+            {loading ? 'Processing...' : (mode === 'login' ? 'Sign In' : mode === 'signup' ? 'Create Account' : 'Reset Password')}
             {!loading && <ArrowRight className="w-4 h-4" />}
           </button>
         </form>
@@ -138,7 +167,7 @@ export default function LoginPage() {
           {mode === 'login' && (
             <button 
               type="button"
-              onClick={() => alert('Forgot Password flow with DOB verification will be implemented here!')}
+              onClick={() => setMode('forgot_password')}
               className="text-xs font-medium text-gray-500 hover:text-gray-700 transition-colors"
             >
               Forgot your password?
