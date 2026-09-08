@@ -190,10 +190,14 @@ export async function POST(req: Request) {
         try {
           console.log(`[HealthVault] Mode: ${mode || 'prescription'}, Model: ${modelName}, Attempt: ${attempt + 1}`);
 
-          const model = genAI.getGenerativeModel({ model: modelName });
-          const result = await model.generateContent([prompt, ...imageParts]);
-          const response = result.response;
-          const text = response.text();
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: [
+              prompt,
+              ...imageParts
+            ]
+          });
+          const text = response.text;
 
           console.log(`[HealthVault] Raw Gemini response (first 500 chars):`, text.substring(0, 500));
 
