@@ -6,7 +6,31 @@ import { createClient } from '@/utils/supabase/client'
 import { FileText, UploadCloud, HeartPulse, LogOut, ShoppingCart, ExternalLink, Receipt, AlertTriangle, Calendar, Lightbulb, IndianRupee, ChevronDown, ChevronUp, Users, Shield, Copy, CheckCircle2, Activity } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
+
+const SidebarItem = ({ icon: Icon, label, active, onClick, expanded }: any) => (
+  <button 
+    onClick={onClick} 
+    className={`p-3 rounded-2xl flex items-center transition-all overflow-hidden ${active ? 'bg-white/15 text-white' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}
+    style={{ justifyContent: expanded ? 'flex-start' : 'center' }}
+  >
+    <Icon className="w-6 h-6 shrink-0" />
+    <AnimatePresence>
+      {expanded && (
+        <motion.span 
+          initial={{ opacity: 0, width: 0, marginLeft: 0 }}
+          animate={{ opacity: 1, width: 'auto', marginLeft: 16 }}
+          exit={{ opacity: 0, width: 0, marginLeft: 0 }}
+          className="font-medium whitespace-nowrap"
+        >
+          {label}
+        </motion.span>
+      )}
+    </AnimatePresence>
+  </button>
+)
+
 export default function DashboardClient({ user }: { user: any }) {
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(false)
   const [activeTab, setActiveTab] = useState<'jargon' | 'timeline' | 'family' | 'prescription' | 'bill' | 'insurance' | 'report'>('jargon')
   const [documents, setDocuments] = useState<any[]>([])
   const [familyProfiles, setFamilyProfiles] = useState<any[]>([])
@@ -173,25 +197,68 @@ export default function DashboardClient({ user }: { user: any }) {
   ] as const
 
   return (
-    <div className="min-h-screen bg-[#E4E9E2] p-2 sm:p-6 flex justify-center items-center font-sans selection:bg-[#E2FF6F]">
-      <div className="bg-white w-full max-w-[1440px] h-[95vh] rounded-[40px] shadow-2xl flex overflow-hidden border border-white/50">
+    <div className="min-h-screen bg-[#E4E9E2] p-2 md:p-4 lg:p-6 flex font-sans selection:bg-[#E2FF6F]">
+      <div className="bg-white w-full flex-1 rounded-[24px] md:rounded-[40px] shadow-2xl flex overflow-hidden border border-white/50">
         
-        {/* Dark Sidebar (Bento Style) */}
-        <div className="w-20 sm:w-24 bg-[#1C1C1C] my-4 ml-4 rounded-[32px] hidden sm:flex flex-col items-center py-8 justify-between shrink-0 shadow-lg relative z-10">
-          <div className="flex flex-col items-center gap-8 w-full">
-            <div className="bg-white/10 p-3 rounded-2xl cursor-pointer hover:bg-white/20 transition-all">
-              <HeartPulse className="text-white w-6 h-6" />
+        {/* Dark Sidebar (Expanding Bento Style) */}
+        <motion.div 
+          initial={false}
+          animate={{ width: isSidebarExpanded ? 260 : 96 }}
+          onHoverStart={() => setIsSidebarExpanded(true)}
+          onHoverEnd={() => setIsSidebarExpanded(false)}
+          className="bg-[#1C1C1C] my-4 ml-4 rounded-[32px] hidden sm:flex flex-col py-8 justify-between shrink-0 shadow-lg relative z-20 overflow-hidden"
+        >
+          <div className="flex flex-col gap-8 w-full">
+            <div className="flex items-center px-6">
+              <div className="bg-white/10 p-3 rounded-2xl shrink-0 flex items-center justify-center">
+                <HeartPulse className="text-white w-6 h-6" />
+              </div>
+              <AnimatePresence>
+                {isSidebarExpanded && (
+                  <motion.span 
+                    initial={{ opacity: 0, width: 0, marginLeft: 0 }}
+                    animate={{ opacity: 1, width: 'auto', marginLeft: 16 }}
+                    exit={{ opacity: 0, width: 0, marginLeft: 0 }}
+                    className="text-white font-bold text-xl whitespace-nowrap"
+                  >
+                    HealthVault
+                  </motion.span>
+                )}
+              </AnimatePresence>
             </div>
-            <div className="flex flex-col gap-4 w-full px-4">
-              <button onClick={() => setActiveTab('timeline')} className={`p-3 rounded-2xl flex items-center justify-center transition-all ${activeTab === 'timeline' ? 'bg-white/15 text-white' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}><Calendar className="w-5 h-5" /></button>
-              <button onClick={() => setActiveTab('report')} className={`p-3 rounded-2xl flex items-center justify-center transition-all ${activeTab === 'report' ? 'bg-white/15 text-white' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}><Activity className="w-5 h-5" /></button>
-              <button onClick={() => setActiveTab('family')} className={`p-3 rounded-2xl flex items-center justify-center transition-all ${activeTab === 'family' ? 'bg-white/15 text-white' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}><Users className="w-5 h-5" /></button>
+
+            <div className="flex flex-col gap-3 w-full px-4">
+              {tabs.map(tab => (
+                <SidebarItem 
+                  key={tab.id} 
+                  icon={tab.icon} 
+                  label={tab.label} 
+                  active={activeTab === tab.id} 
+                  onClick={() => setActiveTab(tab.id as any)} 
+                  expanded={isSidebarExpanded} 
+                />
+              ))}
             </div>
           </div>
-          <button onClick={handleSignOut} className="p-3 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-2xl flex items-center justify-center transition-all">
-            <LogOut className="w-5 h-5" />
-          </button>
-        </div>
+          
+          <div className="px-4">
+            <button onClick={handleSignOut} className="w-full p-3 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded-2xl flex items-center transition-all overflow-hidden" style={{ justifyContent: isSidebarExpanded ? 'flex-start' : 'center' }}>
+              <LogOut className="w-6 h-6 shrink-0" />
+              <AnimatePresence>
+                {isSidebarExpanded && (
+                  <motion.span 
+                    initial={{ opacity: 0, width: 0, marginLeft: 0 }}
+                    animate={{ opacity: 1, width: 'auto', marginLeft: 16 }}
+                    exit={{ opacity: 0, width: 0, marginLeft: 0 }}
+                    className="font-medium whitespace-nowrap"
+                  >
+                    Sign Out
+                  </motion.span>
+                )}
+              </AnimatePresence>
+            </button>
+          </div>
+        </motion.div>
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col pt-8 px-6 sm:px-12 pb-8 overflow-y-auto relative no-scrollbar">
