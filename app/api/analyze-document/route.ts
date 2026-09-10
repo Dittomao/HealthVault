@@ -1,262 +1,105 @@
-import { GoogleGenAI } from '@google/genai';
-import { NextResponse } from 'next/server';
+import { GoogleGenAI } from '@google/genai'
+import { NextResponse } from 'next/server'
+import { createClient } from '@/utils/supabase/server'
+import { isAllowedDocumentType, isAnalysisMode, MAX_DOCUMENT_BYTES, normalizeAnalysisResponse, type AnalysisMode } from '@/lib/document-analysis'
 
-export const maxDuration = 60;
+export const maxDuration = 60
 
-const MODELS_TO_TRY = [
-  "gemini-3.6-flash",
-  "gemini-3.5-flash",
-];
-
-const MAX_RETRIES = 2;
+const MODELS_TO_TRY = ['gemini-3.6-flash', 'gemini-3.5-flash']
+const MAX_RETRIES = 2
 
 function getPrescriptionPrompt(): string {
-  return `You are an expert Indian pharmacist and medical AI assistant who specializes in reading doctor handwriting on prescriptions.
-
-Analyze this uploaded prescription image.
-
-1. Read the handwriting extremely carefully. Doctors often use abbreviations:
-   - "Tab" = Tablet, "Cap" = Capsule, "Syp" = Syrup, "Inj" = Injection, "Oint" = Ointment
-   - "BD" = twice daily, "TDS" = thrice daily, "OD" = once daily, "SOS" = as needed
-2. For each medicine, match the handwritten name to a REAL Indian pharmaceutical brand. Common examples:
-   - Augmentin, Amoxyclav, Azithral, Azee
-   - Dolo 650, Crocin, Calpol
-   - Pan 40, Pantop, Rantac
-   - Montair LC, Montek LC, Levocetirizine
-   - Shelcal, Supradyn, Becosules
-   - Grilinctus, Benadryl, Ascoril
-   - Combiflam, Flexon, Voveran
-   - Metformin, Glycomet, Amaryl
-3. Provide a 3-bullet summary of the diagnosis/instructions.
-4. For EVERY medicine found, generate purchase URLs:
-   - tata1mg: "https://www.1mg.com/search/all?name=" followed by the URL-encoded medicine name
-   - apollo: "https://www.apollopharmacy.in/search-medicines/" followed by the URL-encoded medicine name
-
-Respond with ONLY a raw JSON object (no markdown, no backticks, no explanation):
-{"type":"prescription","summary":"- bullet 1\\n- bullet 2\\n- bullet 3","items":[{"name":"Medicine Name","tata1mg":"https://www.1mg.com/search/all?name=Medicine%20Name","apollo":"https://www.apollopharmacy.in/search-medicines/Medicine%20Name"}]}`;
+  return `You are an expert Indian pharmacist and medical AI assistant who reads doctor handwriting on prescriptions. Analyze the uploaded prescription carefully. Expand common abbreviations (Tab, Cap, Syp, Inj, Oint, BD, TDS, OD, SOS), identify real Indian medicine brands only when supported by the document, and provide a concise three-bullet summary. For every medicine, generate Tata 1mg and Apollo search URLs using its URL-encoded name. Respond with ONLY raw JSON in this exact shape: {"type":"prescription","summary":"- bullet 1\\n- bullet 2\\n- bullet 3","items":[{"name":"Medicine Name","tata1mg":"https://www.1mg.com/search/all?name=Medicine%20Name","apollo":"https://www.apollopharmacy.in/search-medicines/Medicine%20Name"}]}`
 }
 
 function getBillPrompt(): string {
-  return `You are an expert Indian healthcare cost analyst and patient advocate. You specialize in analyzing hospital bills, identifying overcharges, finding cost-cutting opportunities, and advising patients on follow-up care.
-
-Analyze this uploaded hospital/medical bill image thoroughly.
-
-Perform ALL of the following:
-
-1. **Cost Breakdown**: Identify every line item and its cost. Calculate the total.
-
-2. **Overcharges & Junk Fees**: Flag any charges that appear:
-   - Inflated beyond standard Indian hospital rates (e.g., disposable gloves charged at ₹500, or simple saline at ₹1000)
-   - Duplicated (same service billed twice)
-   - Unnecessary (charges for services not typically required for the stated diagnosis)
-   - Hidden fees (administrative fees, documentation charges, "facility charges")
-
-3. **Cost-Cutting Suggestions**: For each flagged charge, suggest:
-   - What a fair price would be
-   - Whether the patient can dispute this charge
-   - Alternative options (e.g., buying medicines from outside pharmacy vs hospital pharmacy)
-
-4. **Follow-Up Recommendation**: Based on the diagnosis/treatment mentioned in the bill:
-   - Recommend when the patient should schedule a follow-up appointment
-   - Suggest what type of doctor to see (GP, specialist, etc.)
-   - Any preventive care advice
-
-5. **Summary**: Provide a concise 3-bullet overview of the bill.
-
-Respond with ONLY a raw JSON object (no markdown, no backticks). Use this exact structure:
-{
-  "type": "bill",
-  "summary": "- Total bill: ₹X for Y treatment at Z hospital\\n- X items flagged as potential overcharges totaling ₹Y\\n- Follow-up recommended in X weeks",
-  "totalAmount": "₹12,500",
-  "flaggedCharges": [
-    {
-      "item": "Name of the charge",
-      "billedAmount": "₹500",
-      "fairPrice": "₹100",
-      "reason": "Why this is flagged (e.g., inflated, unnecessary, duplicate)",
-      "canDispute": true
-    }
-  ],
-  "costSavingTips": [
-    "Buy prescribed medicines from an outside pharmacy like 1mg or Apollo — hospital pharmacies mark up by 30-60%",
-    "Request itemized bill and challenge any 'miscellaneous' or 'documentation' fees"
-  ],
-  "followUp": {
-    "recommendedDate": "2 weeks from discharge",
-    "doctorType": "General Physician or relevant specialist",
-    "notes": "Brief advice on what to monitor and when to seek immediate care"
-  },
-  "items": ["charge 1 description", "charge 2 description"]
-}`;
+  return `You are an expert Indian healthcare cost analyst and patient advocate. Analyze the uploaded hospital or medical bill. Identify line items and total, flag inflated, duplicated, unnecessary, or hidden charges, estimate a fair price and whether each can be disputed, provide cost-saving suggestions, and recommend follow-up timing, doctor type, and warning signs. Respond with ONLY raw JSON in this exact shape: {"type":"bill","summary":"- Total bill...\\n- Potential overcharges...\\n- Follow-up...","totalAmount":"₹12,500","flaggedCharges":[{"item":"Charge","billedAmount":"₹500","fairPrice":"₹100","reason":"Why it is flagged","canDispute":true}],"costSavingTips":["Suggestion"],"followUp":{"recommendedDate":"2 weeks from discharge","doctorType":"General Physician","notes":"What to monitor"},"items":["charge description"]}`
 }
 
 function getJargonPrompt(): string {
-  return `You are a helpful, senior-citizen-friendly medical assistant.
-Your job is to translate confusing medical jargon, lab reports, insurance letters, or any health document into extremely simple, plain English that a grandparent would easily understand.
-
-Analyze this uploaded document. Provide:
-1. "What is this?" - One plain-English sentence.
-2. "Do I owe money?" - Yes/No, plus amount if applicable.
-3. "Deadlines?" - Extract any important dates (e.g., expiry, appointment). If none, say "None".
-4. A 3-bullet summary in very simple words.
-
-Respond with ONLY a raw JSON object (no markdown, no backticks).
-{
-  "type": "jargon",
-  "whatIsThis": "This is a blood test report checking your cholesterol.",
-  "oweMoney": "No",
-  "deadline": "None",
-  "summary": "- Your cholesterol is slightly high.\\n- The doctor might ask you to eat less fried food.\\n- Everything else looks normal."
-}`;
+  return `You are a helpful, senior-citizen-friendly medical assistant. Translate the uploaded medical document, lab report, insurance letter, or health document into very simple plain English. State what it is, whether money is owed and the amount, any important deadline, and a concise three-bullet summary. Respond with ONLY raw JSON in this exact shape: {"type":"jargon","whatIsThis":"This is a blood test report.","oweMoney":"No","deadline":"None","summary":"- Simple point 1\\n- Simple point 2\\n- Simple point 3"}`
 }
 
 function getReportPrompt(): string {
-  return `You are an expert Indian doctor and medical AI assistant.
-Your job is to analyze a health report (e.g., blood test, MRI, discharge summary) and recommend the next steps.
+  return `You are an expert Indian medical assistant. Analyze the uploaded health report and provide a concise three-bullet summary, two or three simple recommended actions, and suggested appointments with doctor type, timeframe, and reason. Do not diagnose beyond the document. Respond with ONLY raw JSON in this exact shape: {"type":"report","summary":"- Finding 1\\n- Finding 2\\n- Finding 3","recommendedActions":["Action"],"appointments":[{"doctorType":"Cardiologist","timeframe":"Within 1 week","reason":"Reason"}]}`
+}
 
-Analyze this uploaded report. Provide:
-1. "summary" - A concise 3-bullet overview of the report's key findings.
-2. "recommendedActions" - 2-3 simple, actionable steps the patient should take based on the report.
-3. "appointments" - Recommend what type of doctor they should see and in what timeframe.
+function getPrompt(mode: AnalysisMode): string {
+  if (mode === 'bill') return getBillPrompt()
+  if (mode === 'jargon') return getJargonPrompt()
+  if (mode === 'report') return getReportPrompt()
+  return getPrescriptionPrompt()
+}
 
-Respond with ONLY a raw JSON object (no markdown, no backticks). Use this exact structure:
-{
-  "type": "report",
-  "summary": "- Finding 1\\n- Finding 2\\n- Finding 3",
-  "recommendedActions": ["Drink more water", "Reduce salt intake"],
-  "appointments": [
-    {
-      "doctorType": "Cardiologist",
-      "timeframe": "Within 1 week",
-      "reason": "To discuss high blood pressure findings"
-    }
-  ]
-}`;
+function isOwnedStoragePath(path: string, userId: string): boolean {
+  const prefix = `${userId}/`
+  const name = path.slice(prefix.length)
+  return path.startsWith(prefix) && name.length > 0 && !name.includes('/') && !path.includes('..') && !path.includes('\\')
+}
+
+function extractJson(text: string): unknown {
+  let jsonText = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  const firstBrace = jsonText.indexOf('{')
+  const lastBrace = jsonText.lastIndexOf('}')
+  if (firstBrace >= 0 && lastBrace > firstBrace) jsonText = jsonText.slice(firstBrace, lastBrace + 1)
+  return JSON.parse(jsonText) as unknown
 }
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "Gemini API key is missing. Add GEMINI_API_KEY to your .env.local file." },
-        { status: 500 }
-      );
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) return NextResponse.json({ error: 'Authentication required.' }, { status: 401 })
+
+    let body: unknown
+    try { body = await req.json() as unknown } catch { return NextResponse.json({ error: 'Invalid JSON request.' }, { status: 400 }) }
+    const requestData = typeof body === 'object' && body !== null ? body as Record<string, unknown> : null
+    const mode = requestData?.mode
+    const storagePath = requestData?.storagePath
+    if (!isAnalysisMode(mode)) return NextResponse.json({ error: 'Unsupported analysis mode.' }, { status: 400 })
+    if (typeof storagePath !== 'string' || !isOwnedStoragePath(storagePath, user.id)) {
+      return NextResponse.json({ error: 'Invalid document storage path.' }, { status: 400 })
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    const { data: file, error: downloadError } = await supabase.storage.from('documents').download(storagePath)
+    if (downloadError || !file) return NextResponse.json({ error: 'Uploaded document was not found.' }, { status: 404 })
+    if (!isAllowedDocumentType(file.type)) return NextResponse.json({ error: 'Unsupported document type.' }, { status: 400 })
+    if (file.size > MAX_DOCUMENT_BYTES) return NextResponse.json({ error: 'Document exceeds the 10 MB limit.' }, { status: 400 })
 
-    const { base64Image, mimeType, mode, fileUrl } = await req.json();
+    const apiKey = process.env.GEMINI_API_KEY
+    if (!apiKey) return NextResponse.json({ error: 'Document analysis is not configured.' }, { status: 503 })
+    const ai = new GoogleGenAI({ apiKey })
+    const base64 = Buffer.from(await file.arrayBuffer()).toString('base64')
+    let providerUnavailable = false
 
-    let finalBase64 = base64Image;
-
-    if (!finalBase64 && fileUrl) {
-      try {
-        const response = await fetch(fileUrl);
-        if (!response.ok) throw new Error("Failed to fetch image from URL");
-        const arrayBuffer = await response.arrayBuffer();
-        finalBase64 = Buffer.from(arrayBuffer).toString('base64');
-      } catch (e) {
-        console.error("Error fetching fileUrl:", e);
-        return NextResponse.json({ error: "Failed to process the uploaded file for analysis." }, { status: 400 });
-      }
-    }
-
-    if (!finalBase64) {
-      return NextResponse.json({ error: "No image data provided." }, { status: 400 });
-    }
-
-    const resolvedMimeType = mimeType || "image/png";
-    let prompt;
-    if (mode === 'bill') {
-      prompt = getBillPrompt();
-    } else if (mode === 'jargon') {
-      prompt = getJargonPrompt();
-    } else if (mode === 'report') {
-      prompt = getReportPrompt();
-    } else {
-      prompt = getPrescriptionPrompt();
-    }
-
-    const imageParts = [
-      { inlineData: { data: finalBase64, mimeType: resolvedMimeType } }
-    ];
-
-    let lastError: any = null;
-
-    for (const modelName of MODELS_TO_TRY) {
+    for (const model of MODELS_TO_TRY) {
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-          console.log(`[HealthVault] Mode: ${mode || 'prescription'}, Model: ${modelName}, Attempt: ${attempt + 1}`);
-
-          const response = await ai.models.generateContent({
-            model: modelName,
-            contents: [
-              prompt,
-              ...imageParts
-            ]
-          });
-          const text = response.text;
-
-          console.log(`[HealthVault] Raw Gemini response (first 500 chars):`, text.substring(0, 500));
-
-          let jsonText = text.trim();
-          jsonText = jsonText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-          jsonText = jsonText.trim();
-
-          const firstBrace = jsonText.indexOf('{');
-          const lastBrace = jsonText.lastIndexOf('}');
-          if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-            jsonText = jsonText.substring(firstBrace, lastBrace + 1);
+          console.info(`[HealthVault] Analysis mode=${mode} model=${model} attempt=${attempt + 1}`)
+          const response = await ai.models.generateContent({ model, contents: [getPrompt(mode), { inlineData: { data: base64, mimeType: file.type } }] })
+          if (typeof response.text !== 'string' || !response.text.trim()) throw new Error('EMPTY_RESPONSE')
+          const parsed = extractJson(response.text)
+          if (!normalizeAnalysisResponse(mode, parsed)) throw new Error('INVALID_RESPONSE')
+          return NextResponse.json(parsed)
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : ''
+          if (message.includes('404') || message.includes('429') || message.toLowerCase().includes('quota')) { providerUnavailable = true; break }
+          if (message.includes('503') || message.includes('Service Unavailable')) {
+            providerUnavailable = true
+            if (attempt < MAX_RETRIES) await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 2000))
+            continue
           }
-
-          const data = JSON.parse(jsonText);
-
-          if (!data.type || !data.summary) {
-            throw new Error("AI returned malformed data: missing type or summary.");
-          }
-
-          console.log(`[HealthVault] Successfully parsed. Type: ${data.type}`);
-          return NextResponse.json(data);
-
-        } catch (err: any) {
-          lastError = err;
-          const msg = err.message || '';
-
-          if (msg.includes('404')) {
-            console.warn(`[HealthVault] Model ${modelName} not found (404), trying next.`);
-            break;
-          }
-          if (msg.includes('429') || msg.includes('quota')) {
-            console.warn(`[HealthVault] Model ${modelName} rate-limited (429), trying next.`);
-            break;
-          }
-          if (msg.includes('503') || msg.includes('Service Unavailable')) {
-            console.warn(`[HealthVault] 503 from ${modelName}, retrying in ${(attempt + 1) * 2}s...`);
-            await new Promise(r => setTimeout(r, (attempt + 1) * 2000));
-            continue;
-          }
-          if (msg.includes('JSON') || msg.includes('Unexpected token')) {
-            console.warn(`[HealthVault] JSON parse failed for ${modelName}, retrying...`);
-            continue;
-          }
-          console.error(`[HealthVault] Unknown error with ${modelName}:`, msg);
-          continue;
+          if (message.includes('JSON') || message.includes('INVALID_RESPONSE') || message.includes('EMPTY_RESPONSE')) continue
+          console.error(`[HealthVault] Analysis provider error model=${model}`)
+          providerUnavailable = true
+          break
         }
       }
     }
 
-    console.error("[HealthVault] All models failed. Last error:", lastError?.message);
-    return NextResponse.json(
-      { error: lastError?.message || "All AI models failed. Please try again in a minute." },
-      { status: 500 }
-    );
-
-  } catch (error: any) {
-    console.error("[HealthVault] Unexpected server error:", error);
-    return NextResponse.json(
-      { error: error.message || "Unexpected server error." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: providerUnavailable ? 'Document analysis is temporarily unavailable. Please try again.' : 'The document could not be analyzed.' }, { status: providerUnavailable ? 503 : 502 })
+  } catch (error: unknown) {
+    console.error('[HealthVault] Unexpected analysis route error', error instanceof Error ? error.name : 'UnknownError')
+    return NextResponse.json({ error: 'Unexpected server error.' }, { status: 500 })
   }
 }

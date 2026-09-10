@@ -1,13 +1,30 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import type { ComponentType } from 'react'
+import type { User } from '@supabase/supabase-js'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createClient } from '@/utils/supabase/client'
-import { FileText, UploadCloud, HeartPulse, LogOut, ShoppingCart, ExternalLink, Receipt, AlertTriangle, Calendar, Lightbulb, IndianRupee, ChevronDown, ChevronUp, Users, Shield, Copy, CheckCircle2, Activity } from 'lucide-react'
+import { FileText, UploadCloud, HeartPulse, LogOut, ExternalLink, Receipt, AlertTriangle, Calendar, Lightbulb, ChevronDown, ChevronUp, Users, Shield, Copy, CheckCircle2, Activity } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import {
+  errorMessage, isFamilyProfile, isHealthDocument, isInsurancePolicy,
+  metadataForStorage, normalizeAnalysisResponse, normalizeStoredMetadata,
+  validateDocumentFile, type AnalysisMode, type BillMetadata,
+  type DashboardTab, type FamilyProfile, type HealthDocument,
+  type InsurancePolicy, type JargonMetadata, type PrescriptionMetadata,
+  type ReportMetadata,
+} from '@/lib/document-analysis'
 
+type SidebarItemProps = {
+  icon: ComponentType<{ className?: string }>
+  label: string
+  active: boolean
+  onClick: () => void
+  expanded: boolean
+}
 
-const SidebarItem = ({ icon: Icon, label, active, onClick, expanded }: any) => (
+const SidebarItem = ({ icon: Icon, label, active, onClick, expanded }: SidebarItemProps) => (
   <button 
     onClick={onClick} 
     className={`p-3 rounded-2xl flex items-center transition-all overflow-hidden ${active ? 'bg-white/15 text-white' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}
@@ -29,162 +46,181 @@ const SidebarItem = ({ icon: Icon, label, active, onClick, expanded }: any) => (
   </button>
 )
 
-export default function DashboardClient({ user }: { user: any }) {
+export default function DashboardClient({ user }: { user: User }) {
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false)
-  const [activeTab, setActiveTab] = useState<'jargon' | 'timeline' | 'family' | 'prescription' | 'bill' | 'insurance' | 'report'>('jargon')
-  const [documents, setDocuments] = useState<any[]>([])
-  const [familyProfiles, setFamilyProfiles] = useState<any[]>([])
-  const [insurancePolicies, setInsurancePolicies] = useState<any[]>([])
+  const [activeTab, setActiveTab] = useState<DashboardTab>('jargon')
+  const [documents, setDocuments] = useState<HealthDocument[]>([])
+  const [familyProfiles, setFamilyProfiles] = useState<FamilyProfile[]>([])
+  const [insurancePolicies, setInsurancePolicies] = useState<InsurancePolicy[]>([])
   const [isUploading, setIsUploading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [expandedDoc, setExpandedDoc] = useState<string | null>(null)
-  
-  // Forms state
+  const [status, setStatus] = useState<{ kind: 'error' | 'success'; message: string } | null>(null)
   const [familyForm, setFamilyForm] = useState({ full_name: '', relationship: '', date_of_birth: '', blood_group: '' })
   const [insuranceForm, setInsuranceForm] = useState({ provider_name: '', policy_number: '' })
   const [insuranceFile, setInsuranceFile] = useState<File | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
 
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
   const router = useRouter()
 
+  const loadDocuments = useCallback(async () => {
+    const { data, error } = await supabase.from('documents').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
+    if (error) throw new Error(`Documents could not be loaded: ${error.message}`)
+    setDocuments((data ?? []).filter(isHealthDocument))
+  }, [supabase, user.id])
+
+  const loadFamilyProfiles = useCallback(async () => {
+    const { data, error } = await supabase.from('family_profiles').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
+    if (error) throw new Error(`Family profiles could not be loaded: ${error.message}`)
+    setFamilyProfiles((data ?? []).filter(isFamilyProfile))
+  }, [supabase, user.id])
+
+  const loadInsurancePolicies = useCallback(async () => {
+    const { data, error } = await supabase.from('insurance_policies').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
+    if (error) throw new Error(`Insurance policies could not be loaded: ${error.message}`)
+    setInsurancePolicies((data ?? []).filter(isInsurancePolicy))
+  }, [supabase, user.id])
+
   useEffect(() => {
-    fetchData()
-  }, [])
-
-  const fetchData = async () => {
-    const { data: docs } = await supabase.from('documents').select('*').order('created_at', { ascending: false })
-    if (docs) setDocuments(docs)
-
-    const { data: family } = await supabase.from('family_profiles').select('*').order('created_at', { ascending: false })
-    if (family) setFamilyProfiles(family)
-
-    const { data: insurance } = await supabase.from('insurance_policies').select('*').order('created_at', { ascending: false })
-    if (insurance) setInsurancePolicies(insurance)
-  }
+    const load = async () => {
+      const results = await Promise.allSettled([loadDocuments(), loadFamilyProfiles(), loadInsurancePolicies()])
+      const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      if (failures.length > 0) setStatus({ kind: 'error', message: failures.map(failure => errorMessage(failure.reason, 'Data could not be loaded.')).join(' ') })
+    }
+    void load()
+  }, [loadDocuments, loadFamilyProfiles, loadInsurancePolicies])
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/login')
   }
 
-  const triggerUpload = (mode: 'jargon' | 'prescription' | 'bill' | 'report') => {
-    const input = document.getElementById(`file-input-${mode}`) as HTMLInputElement
-    input?.click()
+  const triggerUpload = (mode: AnalysisMode) => {
+    document.getElementById(`file-input-${mode}`)?.click()
   }
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, mode: 'jargon' | 'prescription' | 'bill' | 'report') => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>, mode: AnalysisMode) => {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    if (!file || isUploading) return
+    const validationError = validateDocumentFile(file)
+    if (validationError) {
+      setStatus({ kind: 'error', message: validationError })
+      input.value = ''
+      return
+    }
 
     setIsUploading(true)
+    setStatus(null)
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+    const storagePath = `${user.id}/${crypto.randomUUID()}_${safeName}`
+    let uploaded = false
 
     try {
-      const fileName = `${user.id}/${Date.now()}_${file.name}`
-      const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file)
+      const { error: uploadError } = await supabase.storage.from('documents').upload(storagePath, file, { contentType: file.type })
+      if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`)
+      uploaded = true
 
-      if (uploadError) throw uploadError
-
-      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(fileName)
-
-      try {
-        const res = await fetch('/api/analyze-document', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileUrl: publicUrl, mimeType: file.type, mode })
-        })
-
-        const aiData = await res.json()
-        if (aiData.error) throw new Error(aiData.error)
-
-        let extraData: any = {};
-        if (mode === 'bill') {
-          extraData = { flaggedCharges: aiData.flaggedCharges || [], costSavingTips: aiData.costSavingTips || [], followUp: aiData.followUp || null, totalAmount: aiData.totalAmount || 'N/A', items: aiData.items || [] };
-        } else if (mode === 'jargon') {
-          extraData = { whatIsThis: aiData.whatIsThis, oweMoney: aiData.oweMoney, deadline: aiData.deadline };
-        } else if (mode === 'report') {
-          extraData = { recommendedActions: aiData.recommendedActions || [], appointments: aiData.appointments || [] };
-        } else {
-          extraData = aiData.items || [];
-        }
-
-        await supabase.from('documents').insert({
-          user_id: user.id,
-          document_type: aiData.type || mode,
-          file_url: publicUrl,
-          ai_summary: aiData.summary || 'Summary unavailable',
-          flagged_charges: extraData
-        })
-
-        fetchData()
-      } catch (error: any) {
-        console.error('AI Analysis failed:', error)
-        alert(error.message || 'Analysis failed.')
-      } finally {
-        setIsUploading(false)
+      const response = await fetch('/api/analyze-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storagePath, mode }),
+      })
+      const payload: unknown = await response.json().catch(() => null)
+      if (!response.ok) {
+        const message = typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string'
+          ? payload.error : 'Analysis failed.'
+        throw new Error(message)
       }
-    } catch (error: any) {
-      console.error('Upload failed:', error)
-      alert(error.message || 'Upload failed.')
+      const analysis = normalizeAnalysisResponse(mode, payload)
+      if (!analysis) throw new Error('The analysis result was incomplete. Please try again.')
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath)
+      const { error: insertError } = await supabase.from('documents').insert({
+        user_id: user.id,
+        document_type: mode,
+        file_url: publicUrl,
+        ai_summary: analysis.summary,
+        flagged_charges: metadataForStorage(analysis),
+      })
+      if (insertError) throw new Error(`Analysis could not be saved: ${insertError.message}`)
+      uploaded = false
+      await loadDocuments()
+      setStatus({ kind: 'success', message: 'Document analyzed and saved.' })
+    } catch (error: unknown) {
+      if (uploaded) await supabase.storage.from('documents').remove([storagePath])
+      setStatus({ kind: 'error', message: errorMessage(error, 'Document upload failed.') })
+    } finally {
       setIsUploading(false)
+      input.value = ''
     }
-    e.target.value = ''
   }
 
-  const saveFamilyProfile = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const { error } = await supabase.from('family_profiles').insert({ ...familyForm, user_id: user.id })
-    if (error) alert(error.message)
-    else { setFamilyForm({ full_name: '', relationship: '', date_of_birth: '', blood_group: '' }); fetchData() }
-  }
-
-  const saveInsurance = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const saveFamilyProfile = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (isSaving) return
     setIsSaving(true)
-    let document_url = null
-    
+    setStatus(null)
     try {
-      if (insuranceFile) {
-        const fileExt = insuranceFile.name.split('.').pop()
-        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`
-        const { data, error: uploadError } = await supabase.storage.from('documents').upload(`${user.id}/${fileName}`, insuranceFile)
-        
-        if (uploadError) {
-          throw new Error("File upload failed: " + uploadError.message)
-        }
-        
-        const { data: publicUrlData } = supabase.storage.from('documents').getPublicUrl(`${user.id}/${fileName}`)
-        document_url = publicUrlData.publicUrl
-      }
-      
-      const { error } = await supabase.from('insurance_policies').insert({ ...insuranceForm, document_url, user_id: user.id })
+      const { error } = await supabase.from('family_profiles').insert({ ...familyForm, user_id: user.id })
       if (error) throw error
-      
-      setInsuranceForm({ provider_name: '', policy_number: '' })
-      setInsuranceFile(null)
-      const fileInput = document.getElementById('insurance-file-input') as HTMLInputElement
-      if (fileInput) fileInput.value = ''
-      fetchData()
-    } catch (error: any) {
-      alert(error.message)
+      setFamilyForm({ full_name: '', relationship: '', date_of_birth: '', blood_group: '' })
+      await loadFamilyProfiles()
+      setStatus({ kind: 'success', message: 'Family profile saved.' })
+    } catch (error: unknown) {
+      setStatus({ kind: 'error', message: errorMessage(error, 'Family profile could not be saved.') })
     } finally {
       setIsSaving(false)
     }
   }
 
-  const copyToClipboard = (text: string, id: string) => {
-    navigator.clipboard.writeText(text)
-    setCopied(id)
-    setTimeout(() => setCopied(null), 2000)
+  const saveInsurance = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (isSaving) return
+    setIsSaving(true)
+    setStatus(null)
+    let documentUrl: string | null = null
+    let uploadedPath: string | null = null
+
+    try {
+      if (insuranceFile) {
+        const validationError = validateDocumentFile(insuranceFile)
+        if (validationError) throw new Error(validationError)
+        const safeName = insuranceFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+        uploadedPath = `${user.id}/${crypto.randomUUID()}_${safeName}`
+        const { error: uploadError } = await supabase.storage.from('documents').upload(uploadedPath, insuranceFile, { contentType: insuranceFile.type })
+        if (uploadError) throw new Error(`File upload failed: ${uploadError.message}`)
+        documentUrl = supabase.storage.from('documents').getPublicUrl(uploadedPath).data.publicUrl
+      }
+
+      const { error } = await supabase.from('insurance_policies').insert({ ...insuranceForm, document_url: documentUrl, user_id: user.id })
+      if (error) throw error
+      uploadedPath = null
+      setInsuranceForm({ provider_name: '', policy_number: '' })
+      setInsuranceFile(null)
+      const fileInput = document.getElementById('insurance-file-input') as HTMLInputElement | null
+      if (fileInput) fileInput.value = ''
+      await loadInsurancePolicies()
+      setStatus({ kind: 'success', message: 'Insurance policy saved.' })
+    } catch (error: unknown) {
+      if (uploadedPath) await supabase.storage.from('documents').remove([uploadedPath])
+      setStatus({ kind: 'error', message: errorMessage(error, 'Insurance policy could not be saved.') })
+    } finally {
+      setIsSaving(false)
+    }
   }
 
-  const tabDocs = documents.filter(d => {
-    if (activeTab === 'jargon') return d.document_type === 'jargon'
-    if (activeTab === 'prescription') return d.document_type === 'prescription'
-    if (activeTab === 'bill') return d.document_type === 'bill'
-    if (activeTab === 'report') return d.document_type === 'report'
-    return false
-  })
+  const copyToClipboard = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(id)
+      setTimeout(() => setCopied(null), 2000)
+    } catch (error: unknown) {
+      setStatus({ kind: 'error', message: errorMessage(error, 'Details could not be copied.') })
+    }
+  }
+
+  const tabDocs = documents.filter(document => document.document_type === activeTab)
 
   const tabs = [
     { id: 'jargon', label: 'Jargon Buster', icon: FileText },
@@ -234,7 +270,7 @@ export default function DashboardClient({ user }: { user: any }) {
                   icon={tab.icon} 
                   label={tab.label} 
                   active={activeTab === tab.id} 
-                  onClick={() => setActiveTab(tab.id as any)} 
+                  onClick={() => setActiveTab(tab.id)}
                   expanded={isSidebarExpanded} 
                 />
               ))}
@@ -303,7 +339,7 @@ export default function DashboardClient({ user }: { user: any }) {
                 return (
                   <button
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
+                    onClick={() => setActiveTab(tab.id)}
                     className={`px-5 py-2.5 rounded-full text-sm font-medium transition-all duration-300 ${
                       isActive 
                         ? 'bg-[#1C1C1C] text-white shadow-md scale-105' 
@@ -319,6 +355,11 @@ export default function DashboardClient({ user }: { user: any }) {
 
           {/* Bento Content Area */}
           <div className="flex-1 relative">
+            {status && (
+              <div className={`mb-5 rounded-2xl border px-5 py-3 text-sm font-medium ${status.kind === 'error' ? 'border-red-200 bg-red-50 text-red-700' : 'border-green-200 bg-green-50 text-green-700'}`} role="status">
+                {status.message}
+              </div>
+            )}
             <AnimatePresence mode="wait">
               
               {isUploading && (
@@ -369,12 +410,22 @@ export default function DashboardClient({ user }: { user: any }) {
 
                   {/* Documents List */}
                   <div className="lg:col-span-3 mt-4 space-y-6">
-                    {tabDocs.map((doc: any) => (
+                    {tabDocs.length === 0 && (
+                      <div className="rounded-[24px] border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">No translated documents yet.</div>
+                    )}
+                    {tabDocs.map((doc) => {
+                      const metadata = normalizeStoredMetadata('jargon', doc.flagged_charges) as JargonMetadata
+                      return (
                       <div key={doc.id} className="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm hover:shadow-md transition-shadow">
-                        <h4 className="font-semibold text-lg text-gray-900 mb-2">Translated Summary</h4>
+                        <h4 className="font-semibold text-lg text-gray-900 mb-4">Translated Summary</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+                          <div className="bg-gray-50 rounded-2xl p-4"><p className="text-xs font-semibold text-gray-400 uppercase mb-1">What is this?</p><p className="text-sm text-gray-800">{metadata.whatIsThis}</p></div>
+                          <div className="bg-gray-50 rounded-2xl p-4"><p className="text-xs font-semibold text-gray-400 uppercase mb-1">Do I owe money?</p><p className="text-sm text-gray-800">{metadata.oweMoney}</p></div>
+                          <div className="bg-gray-50 rounded-2xl p-4"><p className="text-xs font-semibold text-gray-400 uppercase mb-1">Deadline</p><p className="text-sm text-gray-800">{metadata.deadline}</p></div>
+                        </div>
                         <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-wrap">{doc.ai_summary}</p>
                       </div>
-                    ))}
+                    )})}
                   </div>
 
                 </motion.div>
@@ -396,17 +447,17 @@ export default function DashboardClient({ user }: { user: any }) {
                         <p className="text-[#1C1C1C]/60 text-center py-10 font-medium">No medical history found. Start uploading documents!</p>
                       ) : (
                         <div className="space-y-4">
-                          {documents.map((doc: any) => (
+                          {documents.map((doc) => (
                             <div key={doc.id} className="bg-white rounded-2xl p-5 shadow-sm border border-white/50 flex flex-col md:flex-row md:items-center gap-4 hover:-translate-y-1 transition-transform">
                               <div className="bg-[#f4f4f4] w-12 h-12 rounded-xl flex items-center justify-center shrink-0">
-                                {doc.document_type === 'prescription' ? <HeartPulse className="w-5 h-5 text-gray-900" /> : <FileText className="w-5 h-5 text-gray-900" />}
+                                {doc.document_type === 'prescription' ? <HeartPulse className="w-5 h-5 text-gray-900" /> : doc.document_type === 'bill' ? <Receipt className="w-5 h-5 text-gray-900" /> : doc.document_type === 'report' ? <Activity className="w-5 h-5 text-gray-900" /> : <FileText className="w-5 h-5 text-gray-900" />}
                               </div>
                               <div className="flex-1">
                                 <h4 className="font-semibold text-gray-900 capitalize">{doc.document_type}</h4>
                                 <p className="text-sm text-gray-500 line-clamp-1 mt-0.5">{doc.ai_summary}</p>
                               </div>
                               <div className="text-xs font-medium text-gray-400 bg-gray-50 px-3 py-1.5 rounded-lg shrink-0">
-                                {new Date(doc.created_at).toLocaleDateString()}
+                                {Number.isNaN(Date.parse(doc.created_at)) ? 'Date unavailable' : new Date(doc.created_at).toLocaleDateString()}
                               </div>
                             </div>
                           ))}
@@ -433,25 +484,32 @@ export default function DashboardClient({ user }: { user: any }) {
                   </div>
 
                   <div className="space-y-6">
-                    {tabDocs.map((doc: any) => {
-                      const extra = doc.flagged_charges || {}
-                      const actions = extra.recommendedActions || []
-                      const appointments = extra.appointments || []
-                      
+                    {tabDocs.length === 0 && <div className="rounded-[24px] border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">No analyzed reports yet.</div>}
+                    {tabDocs.map((doc) => {
+                      const extra = normalizeStoredMetadata('report', doc.flagged_charges) as ReportMetadata
+                      const actions = extra.recommendedActions
+                      const appointments = extra.appointments
+
                       return (
                         <div key={doc.id} className="bg-white rounded-[32px] shadow-sm border border-gray-100 overflow-hidden flex flex-col md:flex-row">
                           <div className="p-8 flex-1 space-y-6">
                             <h3 className="text-xl font-medium text-gray-900">Report Insights</h3>
-                            <p className="text-sm text-gray-600 leading-relaxed bg-gray-50 p-4 rounded-2xl">{doc.ai_summary}</p>
-                            
+                            <p className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap bg-gray-50 p-4 rounded-2xl">{doc.ai_summary}</p>
                             {actions.length > 0 && (
                               <div className="pt-2">
                                 <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-[#1C1C1C]" /> Recommended Actions</h4>
-                                <div className="flex flex-wrap gap-2">
-                                  {actions.map((action: string, i: number) => (
-                                    <span key={i} className="bg-[#E2FF6F]/30 text-[#1C1C1C] text-sm px-4 py-2 rounded-full font-medium">{action}</span>
-                                  ))}
-                                </div>
+                                <div className="flex flex-wrap gap-2">{actions.map((action, index) => <span key={index} className="bg-[#E2FF6F]/30 text-[#1C1C1C] text-sm px-4 py-2 rounded-full font-medium">{action}</span>)}</div>
+                              </div>
+                            )}
+                            {appointments.length > 0 && (
+                              <div className="pt-2 border-t border-gray-100">
+                                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2"><Calendar className="w-4 h-4" /> Suggested Appointments</h4>
+                                <div className="grid gap-3 md:grid-cols-2">{appointments.map((appointment, index) => (
+                                  <div key={index} className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+                                    <div className="flex items-start justify-between gap-3"><p className="font-semibold text-gray-900">{appointment.doctorType}</p><span className="rounded-full bg-white px-2.5 py-1 text-xs text-gray-600">{appointment.timeframe}</span></div>
+                                    <p className="mt-2 text-sm text-gray-600">{appointment.reason}</p>
+                                  </div>
+                                ))}</div>
                               </div>
                             )}
                           </div>
@@ -462,20 +520,59 @@ export default function DashboardClient({ user }: { user: any }) {
                 </motion.div>
               )}
 
-              {/* FAMILY & OTHERS (Generic Fallback for remaining tabs) */}
-              {!isUploading && !['jargon', 'timeline', 'report'].includes(activeTab) && (
-                <motion.div key="generic" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="bg-[#f4f4f4] rounded-[32px] p-8 md:p-10 text-center min-h-[400px] flex flex-col items-center justify-center">
-                  <div className="bg-white p-4 rounded-3xl mb-4 shadow-sm">
-                    <HeartPulse className="w-8 h-8 text-gray-300" />
+              {/* AUTO-FILL PROFILES */}
+              {!isUploading && activeTab === 'family' && (
+                <motion.div key="family" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+                  <div className="bg-[#f4f4f4] rounded-[32px] p-8 md:p-10">
+                    <div className="flex items-center gap-4 mb-8"><div className="bg-white w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm"><Users className="w-6 h-6" /></div><div><h2 className="text-3xl font-medium text-gray-900">Family Profiles</h2><p className="text-gray-500">Save details to quickly fill health forms.</p></div></div>
+                    <form onSubmit={saveFamilyProfile} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <input required value={familyForm.full_name} onChange={event => setFamilyForm({ ...familyForm, full_name: event.target.value })} placeholder="Full name" className="rounded-2xl border border-gray-200 bg-white px-4 py-3 outline-none focus:border-gray-400" />
+                      <select required value={familyForm.relationship} onChange={event => setFamilyForm({ ...familyForm, relationship: event.target.value })} className="rounded-2xl border border-gray-200 bg-white px-4 py-3 outline-none focus:border-gray-400"><option value="">Relationship</option><option>Self</option><option>Spouse</option><option>Parent</option><option>Child</option><option>Other</option></select>
+                      <input type="date" required value={familyForm.date_of_birth} onChange={event => setFamilyForm({ ...familyForm, date_of_birth: event.target.value })} className="rounded-2xl border border-gray-200 bg-white px-4 py-3 outline-none focus:border-gray-400" aria-label="Date of birth" />
+                      <input value={familyForm.blood_group} onChange={event => setFamilyForm({ ...familyForm, blood_group: event.target.value })} placeholder="Blood group (optional)" className="rounded-2xl border border-gray-200 bg-white px-4 py-3 outline-none focus:border-gray-400" />
+                      <button disabled={isSaving} className="md:col-span-2 rounded-full bg-[#1C1C1C] px-6 py-3.5 text-sm font-semibold text-white disabled:opacity-50">{isSaving ? 'Saving...' : 'Save Profile'}</button>
+                    </form>
                   </div>
-                  <h2 className="text-2xl font-medium text-gray-900 mb-2 capitalize">{activeTab} feature active</h2>
-                  <p className="text-gray-500 max-w-sm mx-auto">This section uses the exact same Bento UI styling. Upload documents via the main button below to test this tab!</p>
-                  <div className="mt-8">
-                     <button onClick={() => document.getElementById('file-input-generic')?.click()} className="bg-[#1C1C1C] text-white px-8 py-3.5 rounded-full font-medium hover:scale-105 transition-transform shadow-xl">
-                        Upload {activeTab}
-                     </button>
-                     <input id="file-input-generic" type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => handleFileUpload(e, activeTab as any)} />
-                  </div>
+                  {familyProfiles.length === 0 ? <div className="rounded-[24px] border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">No saved family profiles.</div> : <div className="grid gap-4 md:grid-cols-2">{familyProfiles.map(profile => {
+                    const copyText = `Name: ${profile.full_name}\nRelation: ${profile.relationship}\nDOB: ${profile.date_of_birth}\nBlood Group: ${profile.blood_group || 'N/A'}`
+                    return <div key={profile.id} className="rounded-[24px] border border-gray-100 bg-white p-6 shadow-sm"><div className="flex items-start justify-between gap-3"><h3 className="text-lg font-semibold">{profile.full_name}</h3><span className="rounded-full bg-[#E2FF6F]/40 px-3 py-1 text-xs font-semibold">{profile.relationship}</span></div><p className="mt-4 text-sm text-gray-600">DOB: {profile.date_of_birth}</p><p className="mt-1 text-sm text-gray-600">Blood group: {profile.blood_group || 'N/A'}</p><button type="button" onClick={() => void copyToClipboard(copyText, profile.id)} className="mt-5 flex w-full items-center justify-center gap-2 rounded-full border border-gray-200 px-4 py-2.5 text-sm font-semibold hover:bg-gray-50">{copied === profile.id ? <><CheckCircle2 className="w-4 h-4 text-green-600" /> Copied</> : <><Copy className="w-4 h-4" /> Copy Details</>}</button></div>
+                  })}</div>}
+                </motion.div>
+              )}
+
+              {/* PRESCRIPTION BUY */}
+              {!isUploading && activeTab === 'prescription' && (
+                <motion.div key="prescription" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+                  <div className="bg-[#f4f4f4] rounded-[32px] p-8 md:p-10 flex flex-col sm:flex-row items-center justify-between gap-6"><div><h2 className="text-3xl font-medium text-gray-900 mb-2">Prescription Buy</h2><p className="text-gray-500 max-w-md">Extract medicines from a prescription and open trusted pharmacy searches.</p></div><button onClick={() => triggerUpload('prescription')} className="rounded-full bg-[#1C1C1C] px-6 py-3.5 text-sm font-semibold text-white"><UploadCloud className="inline w-5 h-5 mr-2" />Upload Prescription</button><input id="file-input-prescription" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="hidden" onChange={event => void handleFileUpload(event, 'prescription')} /></div>
+                  {tabDocs.length === 0 && <div className="rounded-[24px] border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">No analyzed prescriptions yet.</div>}
+                  {tabDocs.map(doc => {
+                    const metadata = normalizeStoredMetadata('prescription', doc.flagged_charges) as PrescriptionMetadata
+                    return <div key={doc.id} className="rounded-[32px] border border-gray-100 bg-white p-8 shadow-sm"><h3 className="text-xl font-medium">Prescription Summary</h3><p className="mt-3 whitespace-pre-wrap rounded-2xl bg-gray-50 p-4 text-sm text-gray-600">{doc.ai_summary}</p><h4 className="mt-6 mb-3 text-sm font-semibold">Medicines Found</h4>{metadata.items.length === 0 ? <p className="text-sm text-gray-500">No medicines were extracted.</p> : <div className="space-y-3">{metadata.items.map((medicine, index) => <div key={`${medicine.name}-${index}`} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-4"><span className="font-semibold">{medicine.name}</span><div className="flex gap-2">{medicine.tata1mg && <a href={medicine.tata1mg} target="_blank" rel="noopener noreferrer" className="rounded-full bg-white px-3 py-2 text-xs font-semibold">Tata 1mg <ExternalLink className="inline w-3 h-3" /></a>}{medicine.apollo && <a href={medicine.apollo} target="_blank" rel="noopener noreferrer" className="rounded-full bg-white px-3 py-2 text-xs font-semibold">Apollo <ExternalLink className="inline w-3 h-3" /></a>}</div></div>)}</div>}</div>
+                  })}
+                </motion.div>
+              )}
+
+              {/* BILL ANALYZER */}
+              {!isUploading && activeTab === 'bill' && (
+                <motion.div key="bill" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+                  <div className="bg-[#f4f4f4] rounded-[32px] p-8 md:p-10 flex flex-col sm:flex-row items-center justify-between gap-6"><div><h2 className="text-3xl font-medium text-gray-900 mb-2">Bill Analyzer</h2><p className="text-gray-500 max-w-md">Find potential overcharges and practical savings in hospital bills.</p></div><button onClick={() => triggerUpload('bill')} className="rounded-full bg-[#1C1C1C] px-6 py-3.5 text-sm font-semibold text-white"><UploadCloud className="inline w-5 h-5 mr-2" />Upload Bill</button><input id="file-input-bill" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="hidden" onChange={event => void handleFileUpload(event, 'bill')} /></div>
+                  {tabDocs.length === 0 && <div className="rounded-[24px] border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">No analyzed bills yet.</div>}
+                  {tabDocs.map(doc => {
+                    const metadata = normalizeStoredMetadata('bill', doc.flagged_charges) as BillMetadata
+                    const expanded = expandedDoc === doc.id
+                    return <div key={doc.id} className="overflow-hidden rounded-[32px] border border-gray-100 bg-white shadow-sm"><div className="p-8"><div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3"><h3 className="text-xl font-medium">Bill Summary</h3><span className="rounded-full bg-[#E2FF6F]/40 px-4 py-2 text-sm font-semibold">Total: {metadata.totalAmount}</span></div><p className="mt-4 whitespace-pre-wrap text-sm text-gray-600">{doc.ai_summary}</p><button onClick={() => setExpandedDoc(expanded ? null : doc.id)} className="mt-5 flex items-center gap-2 text-sm font-semibold">{expanded ? 'Hide details' : 'Show full analysis'}{expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</button></div>{expanded && <div className="space-y-5 border-t border-gray-100 bg-gray-50 p-8">{metadata.flaggedCharges.length > 0 && <section><h4 className="mb-3 flex items-center gap-2 font-semibold text-red-700"><AlertTriangle className="w-5 h-5" />Potential Overcharges</h4><div className="space-y-3">{metadata.flaggedCharges.map((charge, index) => <div key={index} className="rounded-2xl border border-red-100 bg-white p-4"><div className="flex flex-col md:flex-row md:items-start justify-between gap-3"><div><p className="font-semibold">{charge.item}</p><p className="mt-1 text-sm text-red-700">{charge.reason}</p></div><div className="text-sm"><p>Billed: {charge.billedAmount}</p><p className="font-semibold text-green-700">Fair: {charge.fairPrice}</p><p className="text-xs text-gray-500">{charge.canDispute ? 'Can be disputed' : 'Dispute not indicated'}</p></div></div></div>)}</div></section>}{metadata.costSavingTips.length > 0 && <section><h4 className="mb-3 flex items-center gap-2 font-semibold"><Lightbulb className="w-5 h-5 text-yellow-500" />Cost-saving tips</h4><ul className="space-y-2">{metadata.costSavingTips.map((tip, index) => <li key={index} className="flex gap-2 text-sm text-gray-700"><CheckCircle2 className="w-4 h-4 shrink-0 text-green-600" />{tip}</li>)}</ul></section>}{metadata.followUp && <section className="rounded-2xl bg-white p-5"><h4 className="font-semibold">Follow-up</h4><p className="mt-2 text-sm"><strong>When:</strong> {metadata.followUp.recommendedDate}</p><p className="mt-1 text-sm"><strong>Doctor:</strong> {metadata.followUp.doctorType}</p><p className="mt-1 text-sm text-gray-600">{metadata.followUp.notes}</p></section>}{metadata.flaggedCharges.length === 0 && metadata.costSavingTips.length === 0 && !metadata.followUp && <p className="text-sm text-gray-500">No additional structured details were provided.</p>}</div>}</div>
+                  })}
+                </motion.div>
+              )}
+
+              {/* INSURANCE CONNECT */}
+              {!isUploading && activeTab === 'insurance' && (
+                <motion.div key="insurance" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
+                  <div className="bg-[#f4f4f4] rounded-[32px] p-8 md:p-10"><div className="flex items-center gap-4 mb-8"><div className="bg-white w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm"><Shield className="w-6 h-6" /></div><div><h2 className="text-3xl font-medium text-gray-900">Insurance Connect</h2><p className="text-gray-500">Keep policy details ready for quick access.</p></div></div><form onSubmit={saveInsurance} className="grid grid-cols-1 md:grid-cols-2 gap-4"><input required value={insuranceForm.provider_name} onChange={event => setInsuranceForm({ ...insuranceForm, provider_name: event.target.value })} placeholder="Provider name" className="rounded-2xl border border-gray-200 bg-white px-4 py-3 outline-none focus:border-gray-400" /><input required value={insuranceForm.policy_number} onChange={event => setInsuranceForm({ ...insuranceForm, policy_number: event.target.value })} placeholder="Policy number" className="rounded-2xl border border-gray-200 bg-white px-4 py-3 outline-none focus:border-gray-400" /><input id="insurance-file-input" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={event => setInsuranceFile(event.target.files?.[0] ?? null)} className="md:col-span-2 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm file:mr-4 file:rounded-full file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:font-semibold" /><button disabled={isSaving} className="md:col-span-2 rounded-full bg-[#1C1C1C] px-6 py-3.5 text-sm font-semibold text-white disabled:opacity-50">{isSaving ? 'Saving...' : 'Save Policy'}</button></form></div>
+                  {insurancePolicies.length === 0 ? <div className="rounded-[24px] border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">No saved insurance policies.</div> : <div className="grid gap-4 md:grid-cols-2">{insurancePolicies.map(policy => {
+                    const copyText = `Provider: ${policy.provider_name}\nPolicy No: ${policy.policy_number}`
+                    return <div key={policy.id} className="flex flex-col rounded-[24px] border border-gray-100 bg-white p-6 shadow-sm"><div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-gray-100"><Shield className="w-5 h-5" /></div><h3 className="text-lg font-semibold">{policy.provider_name}</h3><p className="mt-2 break-all rounded-xl bg-gray-50 px-3 py-2 font-mono text-sm text-gray-600">{policy.policy_number}</p><div className="mt-5 space-y-2">{policy.document_url && <a href={policy.document_url} target="_blank" rel="noopener noreferrer" className="flex w-full items-center justify-center gap-2 rounded-full bg-[#E2FF6F]/40 px-4 py-2.5 text-sm font-semibold"><ExternalLink className="w-4 h-4" />View Document</a>}<button type="button" onClick={() => void copyToClipboard(copyText, policy.id)} className="flex w-full items-center justify-center gap-2 rounded-full border border-gray-200 px-4 py-2.5 text-sm font-semibold hover:bg-gray-50">{copied === policy.id ? <><CheckCircle2 className="w-4 h-4 text-green-600" />Copied</> : <><Copy className="w-4 h-4" />Copy Details</>}</button></div></div>
+                  })}</div>}
                 </motion.div>
               )}
 
