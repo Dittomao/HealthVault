@@ -4,19 +4,21 @@ This document contains the non-negotiable rules for all human and AI agents work
 
 ## Non-Negotiables
 
-1. **Styling & UI**: 
-   - All UI components must use the Tailwind utility classes defined in our stack. 
-   - Never hardcode HEX values; always use the Tailwind color palette (e.g., `text-blue-600` instead of `text-[#2563eb]`).
+1. **Styling & UI**:
+   - All UI components must use Tailwind utility classes defined in the project stack.
+   - Prefer the Tailwind color palette and established project design tokens over introducing new one-off colors.
    - Maintain the existing "PDF Island" whimsical, clean aesthetic.
 
 2. **Data & Database**:
-   - All database calls (via Supabase) must be `async/await`.
-   - Never bypass Row Level Security (RLS). Ensure all queries are tied to the authenticated user's session.
-   - For file uploads, always upload to Supabase Storage first and only pass the public URL to backend APIs to avoid Next.js payload limitations.
+   - All Supabase calls must use `async`/`await`.
+   - Never bypass Row Level Security. Queries and mutations must remain tied to the authenticated user.
+   - Upload files directly from the authenticated browser to private Supabase Storage paths prefixed with the user ID to avoid Next.js request-body limits.
+   - Persist private storage paths, not permanent public URLs. Create short-lived signed URLs only when an authorized user requests access.
 
 3. **Backend & APIs**:
-   - All serverless API routes must be robust. If calling external APIs (like Gemini), wrap them in `try/catch` and gracefully handle rate limiting or service unavailability.
-   - Use the App Router (`src/app/api/...`) strictly.
+   - Wrap external API operations in robust error handling and gracefully handle rate limits and service unavailability.
+   - Keep API Route Handlers under `app/api/` and follow the bundled documentation for the installed Next.js version.
+   - Treat AI output as untrusted data: request structured output, validate it, and normalize it before persistence or display.
 
 4. **Component Architecture**:
-   - Use `'use client'` strictly only when React hooks (useState, useEffect) or interactive event listeners (onClick, onChange) are needed. Otherwise, keep components as server components by default.
+   - Use `'use client'` only when React state, lifecycle logic, event handlers, or browser APIs are required. Otherwise, keep components as Server Components.

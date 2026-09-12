@@ -1,72 +1,74 @@
 # 🏥 HealthVault
 
-HealthVault is an AI-powered, centralized personal health assistant built to bridge the comprehension gap in healthcare. It demystifies dense medical jargon, acts as a financial auditor for hospital bills, and provides a single, secure dashboard for families to manage their scattered health records and insurance policies.
+HealthVault is an AI-assisted personal health-document organizer. It simplifies medical language, reviews hospital bills for potential issues, extracts medicine names from prescriptions, and keeps analyzed records, family profiles, and insurance details in one authenticated dashboard.
 
-![Next.js](https://img.shields.io/badge/Next.js-14+-black?style=for-the-badge&logo=next.js)
-![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
-![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-16-black?style=for-the-badge&logo=next.js)
+![React](https://img.shields.io/badge/React-19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)
 ![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)
 ![Google Gemini](https://img.shields.io/badge/Google_Gemini-8E75B2?style=for-the-badge&logo=google&logoColor=white)
 
----
+## Features
 
-## ✨ Features
+- **Report Analyzer:** Summarizes uploaded reports and suggests questions or follow-up actions. It does not replace professional medical advice.
+- **Bill Analyzer:** Identifies possible duplicate, inflated, or disputable charges and offers cost-saving ideas.
+- **Jargon Buster:** Rewrites complex medical terminology in plain English.
+- **Prescription Buy:** Extracts medicine names and builds searches for known pharmacy sites; it does not purchase medicine.
+- **Timeline:** Displays analyzed documents chronologically.
+- **Family Profiles:** Stores and copies commonly needed family health details.
+- **Insurance Connect:** Stores policy details and optional private policy documents.
 
-- 📑 **Report Analyzer**: Upload a complex lab report or medical document. The AI acts as a triage nurse, translating the diagnosis into plain English and recommending actionable next steps and specialist appointments.
-- 💸 **Bill Analyzer**: Upload a hospital bill to scan for potential financial overcharges. The AI flags padded fees, compares them to fair market prices, and offers cost-saving tips.
-- 🧠 **Jargon Buster**: Simplifies incomprehensible medical terminology into 5th-grade English.
-- 💊 **Prescription Buy**: Extracts medicine names from prescriptions and generates direct search URLs for quick pharmacy access.
-- 🗄️ **Centralized Vault & Timeline**: A single dashboard to chronologically store and view family health profiles, prescriptions, and instantly accessible insurance policy documents for emergencies.
+Supported uploads are PDF, JPEG, PNG, and WebP files up to 10 MB.
 
-## 🛠️ Built With
+## Built With
 
-- **Frontend:** Next.js (App Router), React, Tailwind CSS, Lucide React
-- **Backend/Storage:** Supabase (PostgreSQL, Supabase Storage, Auth)
-- **AI Engine:** Google Gemini (`gemini-1.5-flash`, `gemini-1.5-pro`)
+- **Frontend:** Next.js 16 App Router, React 19, Tailwind CSS 4, Framer Motion, Lucide React
+- **Backend:** Next.js Route Handlers and Supabase Auth/PostgreSQL/Storage
+- **AI:** Google Gemini through `@google/genai`; model selection is configured server-side
 - **Hosting:** Vercel
 
-## 🚀 Architecture & File Upload Flow
+## Architecture and Upload Flow
 
-To bypass Vercel's strict 4.5 MB serverless payload limit for large medical PDFs, HealthVault utilizes an edge-to-cloud upload strategy:
+HealthVault keeps large file bodies out of Next.js requests:
 
-1. The client uploads the raw PDF/Image directly to a secure **Supabase Storage** bucket.
-2. The client sends the returned public URL to the **Vercel API Route**.
-3. The Vercel server downloads the file directly into memory and streams it to **Google Gemini** for processing.
-4. Gemini returns strictly structured JSON, which is stored in a flexible `JSONB` column in the Supabase PostgreSQL database.
+1. The authenticated browser validates and uploads a file directly to a private Supabase Storage path owned by the user.
+2. The browser sends only that storage path and the requested analysis mode to an authenticated Next.js Route Handler.
+3. The server confirms the user owns the path, downloads the object, checks its type and size, and sends its contents to Gemini.
+4. The server validates and normalizes Gemini's structured JSON response.
+5. The browser stores the validated summary and metadata in owner-scoped Supabase tables. Authorized document viewing uses a short-lived signed URL rather than a permanent public URL.
 
-## 💻 Getting Started (Local Development)
+## Local Development
 
 ### Prerequisites
-- Node.js 18+
-- A Supabase Project (Database & Storage)
-- A Google Gemini API Key
 
-### Installation
+- A Node.js version supported by Next.js 16
+- A Supabase project
+- A Google Gemini API key
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/Dittomao/HealthVault.git
-   cd HealthVault
-   ```
+### Setup
 
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
+```bash
+git clone https://github.com/Dittomao/HealthVault.git
+cd HealthVault
+npm install
+```
 
-3. **Set up Environment Variables:**
-   Create a `.env.local` file in the root directory and add the following keys:
-   ```env
-   NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-   GEMINI_API_KEY=your_google_gemini_api_key
-   ```
+Create `.env.local`:
 
-4. **Run the development server:**
-   ```bash
-   npm run dev
-   ```
-   Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+```env
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+GEMINI_API_KEY=your_google_gemini_api_key
+```
 
-## 🔐 Security & Privacy
-HealthVault implements Supabase Row Level Security (RLS) to ensure HIPAA-level privacy concepts. Users can exclusively access their own medical data tied to their authenticated session ID. No sensitive API keys are exposed to the client browser.
+Apply the version-controlled Supabase migrations to an appropriate development project, then start the app:
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+## Security and Privacy
+
+HealthVault uses Supabase authentication, owner-scoped database Row Level Security, and private Storage policies. Files are processed by Supabase, the deployed Next.js server, and Google Gemini; analysis does not happen entirely in the browser. Do not treat this project as HIPAA-certified or as a substitute for medical, legal, insurance, or financial advice. Review the configured policies and deployment environment before handling real health information.

@@ -5,10 +5,10 @@ import type { ComponentType } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createClient } from '@/utils/supabase/client'
-import { FileText, UploadCloud, HeartPulse, LogOut, ExternalLink, Receipt, AlertTriangle, Calendar, Lightbulb, ChevronDown, ChevronUp, Users, Shield, Copy, CheckCircle2, Activity } from 'lucide-react'
-import { useRouter } from 'next/navigation'
+import { FileText, UploadCloud, HeartPulse, LogOut, ExternalLink, Receipt, AlertTriangle, Calendar, Lightbulb, ChevronDown, ChevronUp, Users, Shield, Copy, CheckCircle2, Activity, Trash2 } from 'lucide-react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
-  errorMessage, isFamilyProfile, isHealthDocument, isInsurancePolicy,
+  errorMessage, isDashboardTab, isFamilyProfile, isHealthDocument, isInsurancePolicy,
   metadataForStorage, normalizeAnalysisResponse, normalizeStoredMetadata,
   validateDocumentFile, type AnalysisMode, type BillMetadata,
   type DashboardTab, type FamilyProfile, type HealthDocument,
@@ -46,9 +46,8 @@ const SidebarItem = ({ icon: Icon, label, active, onClick, expanded }: SidebarIt
   </button>
 )
 
-export default function DashboardClient({ user }: { user: User }) {
+export default function DashboardClient({ user, initialTab }: { user: User; initialTab: DashboardTab }) {
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false)
-  const [activeTab, setActiveTab] = useState<DashboardTab>('jargon')
   const [documents, setDocuments] = useState<HealthDocument[]>([])
   const [familyProfiles, setFamilyProfiles] = useState<FamilyProfile[]>([])
   const [insurancePolicies, setInsurancePolicies] = useState<InsurancePolicy[]>([])
@@ -63,6 +62,17 @@ export default function DashboardClient({ user }: { user: User }) {
 
   const supabase = useMemo(() => createClient(), [])
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const requestedTab = searchParams.get('tab')
+  const activeTab = isDashboardTab(requestedTab)
+    ? requestedTab
+    : initialTab
+
+  const selectTab = useCallback((tab: DashboardTab) => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('tab', tab)
+    window.history.pushState(null, '', `?${params.toString()}`)
+  }, [searchParams])
 
   const loadDocuments = useCallback(async () => {
     const { data, error } = await supabase.from('documents').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
@@ -92,8 +102,14 @@ export default function DashboardClient({ user }: { user: User }) {
   }, [loadDocuments, loadFamilyProfiles, loadInsurancePolicies])
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    router.push('/login')
+    setStatus(null)
+    const { error } = await supabase.auth.signOut()
+    if (error) {
+      setStatus({ kind: 'error', message: `Sign out failed: ${error.message}` })
+      return
+    }
+    router.replace('/login')
+    router.refresh()
   }
 
   const triggerUpload = (mode: AnalysisMode) => {
@@ -135,11 +151,11 @@ export default function DashboardClient({ user }: { user: User }) {
       }
       const analysis = normalizeAnalysisResponse(mode, payload)
       if (!analysis) throw new Error('The analysis result was incomplete. Please try again.')
-      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(storagePath)
       const { error: insertError } = await supabase.from('documents').insert({
         user_id: user.id,
         document_type: mode,
-        file_url: publicUrl,
+        storage_path: storagePath,
+        file_url: null,
         ai_summary: analysis.summary,
         flagged_charges: metadataForStorage(analysis),
       })
@@ -179,7 +195,7 @@ export default function DashboardClient({ user }: { user: User }) {
     if (isSaving) return
     setIsSaving(true)
     setStatus(null)
-    let documentUrl: string | null = null
+    let documentPath: string | null = null
     let uploadedPath: string | null = null
 
     try {
@@ -190,10 +206,10 @@ export default function DashboardClient({ user }: { user: User }) {
         uploadedPath = `${user.id}/${crypto.randomUUID()}_${safeName}`
         const { error: uploadError } = await supabase.storage.from('documents').upload(uploadedPath, insuranceFile, { contentType: insuranceFile.type })
         if (uploadError) throw new Error(`File upload failed: ${uploadError.message}`)
-        documentUrl = supabase.storage.from('documents').getPublicUrl(uploadedPath).data.publicUrl
+        documentPath = uploadedPath
       }
 
-      const { error } = await supabase.from('insurance_policies').insert({ ...insuranceForm, document_url: documentUrl, user_id: user.id })
+      const { error } = await supabase.from('insurance_policies').insert({ ...insuranceForm, storage_path: documentPath, document_url: null, user_id: user.id })
       if (error) throw error
       uploadedPath = null
       setInsuranceForm({ provider_name: '', policy_number: '' })
@@ -220,12 +236,71 @@ export default function DashboardClient({ user }: { user: User }) {
     }
   }
 
+  const openStoredDocument = async (storagePath: string | null, legacyUrl: string | null) => {
+    try {
+      if (storagePath) {
+        const { data, error } = await supabase.storage.from('documents').createSignedUrl(storagePath, 60)
+        if (error || !data.signedUrl) throw new Error(error?.message || 'A secure link could not be created.')
+        window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+        return
+      }
+      if (legacyUrl) window.open(legacyUrl, '_blank', 'noopener,noreferrer')
+    } catch (error: unknown) {
+      setStatus({ kind: 'error', message: errorMessage(error, 'Document could not be opened.') })
+    }
+  }
+
+  const deleteDocument = async (document: HealthDocument) => {
+    if (!window.confirm('Delete this document and its stored file? This cannot be undone.')) return
+    setStatus(null)
+    const { error } = await supabase.from('documents').delete().eq('id', document.id).eq('user_id', user.id)
+    if (error) {
+      setStatus({ kind: 'error', message: `Document could not be deleted: ${error.message}` })
+      return
+    }
+    if (document.storage_path) {
+      const { error: storageError } = await supabase.storage.from('documents').remove([document.storage_path])
+      if (storageError) setStatus({ kind: 'error', message: `Record deleted, but its file could not be removed: ${storageError.message}` })
+      else setStatus({ kind: 'success', message: 'Document deleted.' })
+    } else {
+      setStatus({ kind: 'success', message: 'Document deleted.' })
+    }
+    await loadDocuments()
+  }
+
+  const deleteFamilyProfile = async (profile: FamilyProfile) => {
+    if (!window.confirm(`Delete the profile for ${profile.full_name}?`)) return
+    const { error } = await supabase.from('family_profiles').delete().eq('id', profile.id).eq('user_id', user.id)
+    if (error) setStatus({ kind: 'error', message: `Profile could not be deleted: ${error.message}` })
+    else {
+      await loadFamilyProfiles()
+      setStatus({ kind: 'success', message: 'Family profile deleted.' })
+    }
+  }
+
+  const deleteInsurancePolicy = async (policy: InsurancePolicy) => {
+    if (!window.confirm(`Delete the ${policy.provider_name} policy and its stored file?`)) return
+    const { error } = await supabase.from('insurance_policies').delete().eq('id', policy.id).eq('user_id', user.id)
+    if (error) {
+      setStatus({ kind: 'error', message: `Policy could not be deleted: ${error.message}` })
+      return
+    }
+    if (policy.storage_path) {
+      const { error: storageError } = await supabase.storage.from('documents').remove([policy.storage_path])
+      if (storageError) setStatus({ kind: 'error', message: `Policy deleted, but its file could not be removed: ${storageError.message}` })
+      else setStatus({ kind: 'success', message: 'Insurance policy deleted.' })
+    } else {
+      setStatus({ kind: 'success', message: 'Insurance policy deleted.' })
+    }
+    await loadInsurancePolicies()
+  }
+
   const tabDocs = documents.filter(document => document.document_type === activeTab)
 
   const tabs = [
     { id: 'jargon', label: 'Jargon Buster', icon: FileText },
     { id: 'timeline', label: 'Timeline', icon: Calendar },
-    { id: 'family', label: 'Auto-Fill Profiles', icon: Users },
+    { id: 'family', label: 'Family Profiles', icon: Users },
     { id: 'prescription', label: 'Prescription Buy', icon: HeartPulse },
     { id: 'bill', label: 'Bill Analyzer', icon: Receipt },
     { id: 'report', label: 'Report Analyzer', icon: Activity },
@@ -270,7 +345,7 @@ export default function DashboardClient({ user }: { user: User }) {
                   icon={tab.icon} 
                   label={tab.label} 
                   active={activeTab === tab.id} 
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => selectTab(tab.id)}
                   expanded={isSidebarExpanded} 
                 />
               ))}
@@ -307,15 +382,19 @@ export default function DashboardClient({ user }: { user: User }) {
                 </div>
                 <span className="font-bold text-xl tracking-tight text-gray-900">HealthVault</span>
              </div>
-             
+             <button type="button" onClick={() => void handleSignOut()} className="sm:hidden ml-auto inline-flex items-center gap-2 rounded-full border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100">
+               <LogOut className="h-4 w-4" /> Sign out
+             </button>
+
              {/* Desktop Profile Pill */}
-             <div className="hidden sm:flex ml-auto items-center gap-3 bg-[#f4f4f4] pr-4 pl-1 py-1 rounded-full border border-gray-100 hover:bg-gray-200 transition-colors cursor-pointer">
-               <div className="w-8 h-8 rounded-full bg-[#E2FF6F] flex items-center justify-center font-bold text-[#1C1C1C] text-sm">
+             <button type="button" onClick={() => void handleSignOut()} className="hidden sm:flex ml-auto items-center gap-3 bg-[#f4f4f4] pr-4 pl-1 py-1 rounded-full border border-gray-100 hover:bg-gray-200 transition-colors">
+               <span className="w-8 h-8 rounded-full bg-[#E2FF6F] flex items-center justify-center font-bold text-[#1C1C1C] text-sm">
                  {user.email?.[0].toUpperCase()}
-               </div>
+               </span>
                <span className="text-sm font-medium text-gray-700">{user.email}</span>
-               <LogOut className="w-4 h-4 text-gray-400 ml-2" onClick={handleSignOut} />
-             </div>
+               <LogOut className="w-4 h-4 text-gray-400 ml-2" />
+               <span className="sr-only">Sign out</span>
+             </button>
           </header>
 
           <div className="shrink-0">
@@ -339,7 +418,7 @@ export default function DashboardClient({ user }: { user: User }) {
                 return (
                   <button
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => selectTab(tab.id)}
                     className={`px-5 py-2.5 rounded-full text-sm font-medium transition-all duration-300 ${
                       isActive 
                         ? 'bg-[#1C1C1C] text-white shadow-md scale-105' 
@@ -401,8 +480,8 @@ export default function DashboardClient({ user }: { user: User }) {
                       <p className="text-gray-400 text-sm">Automate your health tracking.</p>
                     </div>
                     <div className="mt-8 relative z-10">
-                       <button className="bg-white text-[#1C1C1C] w-full py-3.5 rounded-full text-sm font-semibold hover:bg-gray-100 transition-colors flex items-center justify-center gap-2">
-                         View Analytics <ExternalLink className="w-4 h-4" />
+                       <button type="button" onClick={() => selectTab('timeline')} className="bg-white text-[#1C1C1C] w-full py-3.5 rounded-full text-sm font-semibold hover:bg-gray-100 transition-colors flex items-center justify-center gap-2">
+                         View Timeline <Calendar className="w-4 h-4" />
                        </button>
                     </div>
                     <div className="absolute top-0 right-0 p-6 opacity-20"><Activity className="w-32 h-32" /></div>
@@ -424,6 +503,10 @@ export default function DashboardClient({ user }: { user: User }) {
                           <div className="bg-gray-50 rounded-2xl p-4"><p className="text-xs font-semibold text-gray-400 uppercase mb-1">Deadline</p><p className="text-sm text-gray-800">{metadata.deadline}</p></div>
                         </div>
                         <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-wrap">{doc.ai_summary}</p>
+                        <div className="mt-5 flex flex-wrap gap-2">
+                          {(doc.storage_path || doc.file_url) && <button type="button" onClick={() => void openStoredDocument(doc.storage_path, doc.file_url)} className="inline-flex items-center gap-2 rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold"><ExternalLink className="h-4 w-4" />View source</button>}
+                          <button type="button" onClick={() => void deleteDocument(doc)} className="inline-flex items-center gap-2 rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-700"><Trash2 className="h-4 w-4" />Delete</button>
+                        </div>
                       </div>
                     )})}
                   </div>
@@ -456,8 +539,11 @@ export default function DashboardClient({ user }: { user: User }) {
                                 <h4 className="font-semibold text-gray-900 capitalize">{doc.document_type}</h4>
                                 <p className="text-sm text-gray-500 line-clamp-1 mt-0.5">{doc.ai_summary}</p>
                               </div>
-                              <div className="text-xs font-medium text-gray-400 bg-gray-50 px-3 py-1.5 rounded-lg shrink-0">
-                                {Number.isNaN(Date.parse(doc.created_at)) ? 'Date unavailable' : new Date(doc.created_at).toLocaleDateString()}
+                              <div className="flex shrink-0 items-center gap-2">
+                                <span className="text-xs font-medium text-gray-400 bg-gray-50 px-3 py-1.5 rounded-lg">
+                                  {Number.isNaN(Date.parse(doc.created_at)) ? 'Date unavailable' : new Date(doc.created_at).toLocaleDateString()}
+                                </span>
+                                <button type="button" onClick={() => void deleteDocument(doc)} aria-label={`Delete ${doc.document_type} document`} className="rounded-lg p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
                               </div>
                             </div>
                           ))}
@@ -513,6 +599,10 @@ export default function DashboardClient({ user }: { user: User }) {
                               </div>
                             )}
                           </div>
+                          <div className="flex flex-wrap gap-2 border-t border-gray-100 p-6 md:w-full">
+                            {(doc.storage_path || doc.file_url) && <button type="button" onClick={() => void openStoredDocument(doc.storage_path, doc.file_url)} className="inline-flex items-center gap-2 rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold"><ExternalLink className="h-4 w-4" />View source</button>}
+                            <button type="button" onClick={() => void deleteDocument(doc)} className="inline-flex items-center gap-2 rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-700"><Trash2 className="h-4 w-4" />Delete</button>
+                          </div>
                         </div>
                       )
                     })}
@@ -520,7 +610,7 @@ export default function DashboardClient({ user }: { user: User }) {
                 </motion.div>
               )}
 
-              {/* AUTO-FILL PROFILES */}
+              {/* FAMILY PROFILES */}
               {!isUploading && activeTab === 'family' && (
                 <motion.div key="family" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
                   <div className="bg-[#f4f4f4] rounded-[32px] p-8 md:p-10">
@@ -535,7 +625,7 @@ export default function DashboardClient({ user }: { user: User }) {
                   </div>
                   {familyProfiles.length === 0 ? <div className="rounded-[24px] border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">No saved family profiles.</div> : <div className="grid gap-4 md:grid-cols-2">{familyProfiles.map(profile => {
                     const copyText = `Name: ${profile.full_name}\nRelation: ${profile.relationship}\nDOB: ${profile.date_of_birth}\nBlood Group: ${profile.blood_group || 'N/A'}`
-                    return <div key={profile.id} className="rounded-[24px] border border-gray-100 bg-white p-6 shadow-sm"><div className="flex items-start justify-between gap-3"><h3 className="text-lg font-semibold">{profile.full_name}</h3><span className="rounded-full bg-[#E2FF6F]/40 px-3 py-1 text-xs font-semibold">{profile.relationship}</span></div><p className="mt-4 text-sm text-gray-600">DOB: {profile.date_of_birth}</p><p className="mt-1 text-sm text-gray-600">Blood group: {profile.blood_group || 'N/A'}</p><button type="button" onClick={() => void copyToClipboard(copyText, profile.id)} className="mt-5 flex w-full items-center justify-center gap-2 rounded-full border border-gray-200 px-4 py-2.5 text-sm font-semibold hover:bg-gray-50">{copied === profile.id ? <><CheckCircle2 className="w-4 h-4 text-green-600" /> Copied</> : <><Copy className="w-4 h-4" /> Copy Details</>}</button></div>
+                    return <div key={profile.id} className="rounded-[24px] border border-gray-100 bg-white p-6 shadow-sm"><div className="flex items-start justify-between gap-3"><h3 className="text-lg font-semibold">{profile.full_name}</h3><span className="rounded-full bg-[#E2FF6F]/40 px-3 py-1 text-xs font-semibold">{profile.relationship}</span></div><p className="mt-4 text-sm text-gray-600">DOB: {profile.date_of_birth}</p><p className="mt-1 text-sm text-gray-600">Blood group: {profile.blood_group || 'N/A'}</p><div className="mt-5 flex gap-2"><button type="button" onClick={() => void copyToClipboard(copyText, profile.id)} className="flex flex-1 items-center justify-center gap-2 rounded-full border border-gray-200 px-4 py-2.5 text-sm font-semibold hover:bg-gray-50">{copied === profile.id ? <><CheckCircle2 className="w-4 h-4 text-green-600" /> Copied</> : <><Copy className="w-4 h-4" /> Copy Details</>}</button><button type="button" onClick={() => void deleteFamilyProfile(profile)} aria-label={`Delete ${profile.full_name} profile`} className="rounded-full border border-red-200 p-3 text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button></div></div>
                   })}</div>}
                 </motion.div>
               )}
@@ -547,7 +637,7 @@ export default function DashboardClient({ user }: { user: User }) {
                   {tabDocs.length === 0 && <div className="rounded-[24px] border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">No analyzed prescriptions yet.</div>}
                   {tabDocs.map(doc => {
                     const metadata = normalizeStoredMetadata('prescription', doc.flagged_charges) as PrescriptionMetadata
-                    return <div key={doc.id} className="rounded-[32px] border border-gray-100 bg-white p-8 shadow-sm"><h3 className="text-xl font-medium">Prescription Summary</h3><p className="mt-3 whitespace-pre-wrap rounded-2xl bg-gray-50 p-4 text-sm text-gray-600">{doc.ai_summary}</p><h4 className="mt-6 mb-3 text-sm font-semibold">Medicines Found</h4>{metadata.items.length === 0 ? <p className="text-sm text-gray-500">No medicines were extracted.</p> : <div className="space-y-3">{metadata.items.map((medicine, index) => <div key={`${medicine.name}-${index}`} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-4"><span className="font-semibold">{medicine.name}</span><div className="flex gap-2">{medicine.tata1mg && <a href={medicine.tata1mg} target="_blank" rel="noopener noreferrer" className="rounded-full bg-white px-3 py-2 text-xs font-semibold">Tata 1mg <ExternalLink className="inline w-3 h-3" /></a>}{medicine.apollo && <a href={medicine.apollo} target="_blank" rel="noopener noreferrer" className="rounded-full bg-white px-3 py-2 text-xs font-semibold">Apollo <ExternalLink className="inline w-3 h-3" /></a>}</div></div>)}</div>}</div>
+                    return <div key={doc.id} className="rounded-[32px] border border-gray-100 bg-white p-8 shadow-sm"><h3 className="text-xl font-medium">Prescription Summary</h3><p className="mt-3 whitespace-pre-wrap rounded-2xl bg-gray-50 p-4 text-sm text-gray-600">{doc.ai_summary}</p><h4 className="mt-6 mb-3 text-sm font-semibold">Medicines Found</h4>{metadata.items.length === 0 ? <p className="text-sm text-gray-500">No medicines were extracted.</p> : <div className="space-y-3">{metadata.items.map((medicine, index) => <div key={`${medicine.name}-${index}`} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-4"><span className="font-semibold">{medicine.name}</span><div className="flex gap-2">{medicine.tata1mg && <a href={medicine.tata1mg} target="_blank" rel="noopener noreferrer" className="rounded-full bg-white px-3 py-2 text-xs font-semibold">Tata 1mg <ExternalLink className="inline w-3 h-3" /></a>}{medicine.apollo && <a href={medicine.apollo} target="_blank" rel="noopener noreferrer" className="rounded-full bg-white px-3 py-2 text-xs font-semibold">Apollo <ExternalLink className="inline w-3 h-3" /></a>}</div></div>)}</div>}<div className="mt-6 flex flex-wrap gap-2">{(doc.storage_path || doc.file_url) && <button type="button" onClick={() => void openStoredDocument(doc.storage_path, doc.file_url)} className="inline-flex items-center gap-2 rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold"><ExternalLink className="h-4 w-4" />View source</button>}<button type="button" onClick={() => void deleteDocument(doc)} className="inline-flex items-center gap-2 rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-700"><Trash2 className="h-4 w-4" />Delete</button></div></div>
                   })}
                 </motion.div>
               )}
@@ -560,7 +650,7 @@ export default function DashboardClient({ user }: { user: User }) {
                   {tabDocs.map(doc => {
                     const metadata = normalizeStoredMetadata('bill', doc.flagged_charges) as BillMetadata
                     const expanded = expandedDoc === doc.id
-                    return <div key={doc.id} className="overflow-hidden rounded-[32px] border border-gray-100 bg-white shadow-sm"><div className="p-8"><div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3"><h3 className="text-xl font-medium">Bill Summary</h3><span className="rounded-full bg-[#E2FF6F]/40 px-4 py-2 text-sm font-semibold">Total: {metadata.totalAmount}</span></div><p className="mt-4 whitespace-pre-wrap text-sm text-gray-600">{doc.ai_summary}</p><button onClick={() => setExpandedDoc(expanded ? null : doc.id)} className="mt-5 flex items-center gap-2 text-sm font-semibold">{expanded ? 'Hide details' : 'Show full analysis'}{expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</button></div>{expanded && <div className="space-y-5 border-t border-gray-100 bg-gray-50 p-8">{metadata.flaggedCharges.length > 0 && <section><h4 className="mb-3 flex items-center gap-2 font-semibold text-red-700"><AlertTriangle className="w-5 h-5" />Potential Overcharges</h4><div className="space-y-3">{metadata.flaggedCharges.map((charge, index) => <div key={index} className="rounded-2xl border border-red-100 bg-white p-4"><div className="flex flex-col md:flex-row md:items-start justify-between gap-3"><div><p className="font-semibold">{charge.item}</p><p className="mt-1 text-sm text-red-700">{charge.reason}</p></div><div className="text-sm"><p>Billed: {charge.billedAmount}</p><p className="font-semibold text-green-700">Fair: {charge.fairPrice}</p><p className="text-xs text-gray-500">{charge.canDispute ? 'Can be disputed' : 'Dispute not indicated'}</p></div></div></div>)}</div></section>}{metadata.costSavingTips.length > 0 && <section><h4 className="mb-3 flex items-center gap-2 font-semibold"><Lightbulb className="w-5 h-5 text-yellow-500" />Cost-saving tips</h4><ul className="space-y-2">{metadata.costSavingTips.map((tip, index) => <li key={index} className="flex gap-2 text-sm text-gray-700"><CheckCircle2 className="w-4 h-4 shrink-0 text-green-600" />{tip}</li>)}</ul></section>}{metadata.followUp && <section className="rounded-2xl bg-white p-5"><h4 className="font-semibold">Follow-up</h4><p className="mt-2 text-sm"><strong>When:</strong> {metadata.followUp.recommendedDate}</p><p className="mt-1 text-sm"><strong>Doctor:</strong> {metadata.followUp.doctorType}</p><p className="mt-1 text-sm text-gray-600">{metadata.followUp.notes}</p></section>}{metadata.flaggedCharges.length === 0 && metadata.costSavingTips.length === 0 && !metadata.followUp && <p className="text-sm text-gray-500">No additional structured details were provided.</p>}</div>}</div>
+                    return <div key={doc.id} className="overflow-hidden rounded-[32px] border border-gray-100 bg-white shadow-sm"><div className="p-8"><div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3"><h3 className="text-xl font-medium">Bill Summary</h3><span className="rounded-full bg-[#E2FF6F]/40 px-4 py-2 text-sm font-semibold">Total: {metadata.totalAmount}</span></div><p className="mt-4 whitespace-pre-wrap text-sm text-gray-600">{doc.ai_summary}</p><div className="mt-5 flex flex-wrap gap-2"><button type="button" onClick={() => setExpandedDoc(expanded ? null : doc.id)} className="flex items-center gap-2 rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold">{expanded ? 'Hide details' : 'Show full analysis'}{expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</button>{(doc.storage_path || doc.file_url) && <button type="button" onClick={() => void openStoredDocument(doc.storage_path, doc.file_url)} className="inline-flex items-center gap-2 rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold"><ExternalLink className="h-4 w-4" />View source</button>}<button type="button" onClick={() => void deleteDocument(doc)} className="inline-flex items-center gap-2 rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-700"><Trash2 className="h-4 w-4" />Delete</button></div></div>{expanded && <div className="space-y-5 border-t border-gray-100 bg-gray-50 p-8">{metadata.flaggedCharges.length > 0 && <section><h4 className="mb-3 flex items-center gap-2 font-semibold text-red-700"><AlertTriangle className="w-5 h-5" />Potential Overcharges</h4><div className="space-y-3">{metadata.flaggedCharges.map((charge, index) => <div key={index} className="rounded-2xl border border-red-100 bg-white p-4"><div className="flex flex-col md:flex-row md:items-start justify-between gap-3"><div><p className="font-semibold">{charge.item}</p><p className="mt-1 text-sm text-red-700">{charge.reason}</p></div><div className="text-sm"><p>Billed: {charge.billedAmount}</p><p className="font-semibold text-green-700">Fair: {charge.fairPrice}</p><p className="text-xs text-gray-500">{charge.canDispute ? 'Can be disputed' : 'Dispute not indicated'}</p></div></div></div>)}</div></section>}{metadata.costSavingTips.length > 0 && <section><h4 className="mb-3 flex items-center gap-2 font-semibold"><Lightbulb className="w-5 h-5 text-yellow-500" />Cost-saving tips</h4><ul className="space-y-2">{metadata.costSavingTips.map((tip, index) => <li key={index} className="flex gap-2 text-sm text-gray-700"><CheckCircle2 className="w-4 h-4 shrink-0 text-green-600" />{tip}</li>)}</ul></section>}{metadata.followUp && <section className="rounded-2xl bg-white p-5"><h4 className="font-semibold">Follow-up</h4><p className="mt-2 text-sm"><strong>When:</strong> {metadata.followUp.recommendedDate}</p><p className="mt-1 text-sm"><strong>Doctor:</strong> {metadata.followUp.doctorType}</p><p className="mt-1 text-sm text-gray-600">{metadata.followUp.notes}</p></section>}{metadata.flaggedCharges.length === 0 && metadata.costSavingTips.length === 0 && !metadata.followUp && <p className="text-sm text-gray-500">No additional structured details were provided.</p>}</div>}</div>
                   })}
                 </motion.div>
               )}
@@ -571,7 +661,7 @@ export default function DashboardClient({ user }: { user: User }) {
                   <div className="bg-[#f4f4f4] rounded-[32px] p-8 md:p-10"><div className="flex items-center gap-4 mb-8"><div className="bg-white w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm"><Shield className="w-6 h-6" /></div><div><h2 className="text-3xl font-medium text-gray-900">Insurance Connect</h2><p className="text-gray-500">Keep policy details ready for quick access.</p></div></div><form onSubmit={saveInsurance} className="grid grid-cols-1 md:grid-cols-2 gap-4"><input required value={insuranceForm.provider_name} onChange={event => setInsuranceForm({ ...insuranceForm, provider_name: event.target.value })} placeholder="Provider name" className="rounded-2xl border border-gray-200 bg-white px-4 py-3 outline-none focus:border-gray-400" /><input required value={insuranceForm.policy_number} onChange={event => setInsuranceForm({ ...insuranceForm, policy_number: event.target.value })} placeholder="Policy number" className="rounded-2xl border border-gray-200 bg-white px-4 py-3 outline-none focus:border-gray-400" /><input id="insurance-file-input" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={event => setInsuranceFile(event.target.files?.[0] ?? null)} className="md:col-span-2 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm file:mr-4 file:rounded-full file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:font-semibold" /><button disabled={isSaving} className="md:col-span-2 rounded-full bg-[#1C1C1C] px-6 py-3.5 text-sm font-semibold text-white disabled:opacity-50">{isSaving ? 'Saving...' : 'Save Policy'}</button></form></div>
                   {insurancePolicies.length === 0 ? <div className="rounded-[24px] border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">No saved insurance policies.</div> : <div className="grid gap-4 md:grid-cols-2">{insurancePolicies.map(policy => {
                     const copyText = `Provider: ${policy.provider_name}\nPolicy No: ${policy.policy_number}`
-                    return <div key={policy.id} className="flex flex-col rounded-[24px] border border-gray-100 bg-white p-6 shadow-sm"><div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-gray-100"><Shield className="w-5 h-5" /></div><h3 className="text-lg font-semibold">{policy.provider_name}</h3><p className="mt-2 break-all rounded-xl bg-gray-50 px-3 py-2 font-mono text-sm text-gray-600">{policy.policy_number}</p><div className="mt-5 space-y-2">{policy.document_url && <a href={policy.document_url} target="_blank" rel="noopener noreferrer" className="flex w-full items-center justify-center gap-2 rounded-full bg-[#E2FF6F]/40 px-4 py-2.5 text-sm font-semibold"><ExternalLink className="w-4 h-4" />View Document</a>}<button type="button" onClick={() => void copyToClipboard(copyText, policy.id)} className="flex w-full items-center justify-center gap-2 rounded-full border border-gray-200 px-4 py-2.5 text-sm font-semibold hover:bg-gray-50">{copied === policy.id ? <><CheckCircle2 className="w-4 h-4 text-green-600" />Copied</> : <><Copy className="w-4 h-4" />Copy Details</>}</button></div></div>
+                    return <div key={policy.id} className="flex flex-col rounded-[24px] border border-gray-100 bg-white p-6 shadow-sm"><div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-gray-100"><Shield className="w-5 h-5" /></div><h3 className="text-lg font-semibold">{policy.provider_name}</h3><p className="mt-2 break-all rounded-xl bg-gray-50 px-3 py-2 font-mono text-sm text-gray-600">{policy.policy_number}</p><div className="mt-5 space-y-2">{(policy.storage_path || policy.document_url) && <button type="button" onClick={() => void openStoredDocument(policy.storage_path, policy.document_url)} className="flex w-full items-center justify-center gap-2 rounded-full bg-[#E2FF6F]/40 px-4 py-2.5 text-sm font-semibold"><ExternalLink className="w-4 h-4" />View Document</button>}<div className="flex gap-2"><button type="button" onClick={() => void copyToClipboard(copyText, policy.id)} className="flex flex-1 items-center justify-center gap-2 rounded-full border border-gray-200 px-4 py-2.5 text-sm font-semibold hover:bg-gray-50">{copied === policy.id ? <><CheckCircle2 className="w-4 h-4 text-green-600" />Copied</> : <><Copy className="w-4 h-4" />Copy Details</>}</button><button type="button" onClick={() => void deleteInsurancePolicy(policy)} aria-label={`Delete ${policy.provider_name} policy`} className="rounded-full border border-red-200 p-3 text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button></div></div></div>
                   })}</div>}
                 </motion.div>
               )}

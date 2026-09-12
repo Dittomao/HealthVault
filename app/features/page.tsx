@@ -1,13 +1,13 @@
-import Link from "next/link";
-import { ArrowLeft, Shield, Zap, Lock, EyeOff, Smartphone } from "lucide-react";
+import Link from 'next/link'
+import { ArrowLeft, Shield, Zap, Lock, EyeOff, Smartphone } from 'lucide-react'
 
 export default function FeaturesPage() {
   const features = [
-    { title: '100% Private by Design', desc: 'Your medical data is yours alone. We use secure databases and never sell your personal information to third parties.', icon: EyeOff },
-    { title: 'AI-Powered Analysis', desc: 'Our advanced AI models can read messy handwriting, analyze complex bills, and simplify dense medical jargon instantly.', icon: Zap },
-    { title: 'Bank-Grade Security', desc: 'All documents are stored using Supabase with robust Row Level Security (RLS) policies.', icon: Shield },
-    { title: 'Cross-Device Sync', desc: 'Access your health timeline, insurance documents, and prescriptions from your phone, tablet, or laptop.', icon: Smartphone },
-    { title: 'No Hidden Fees', desc: 'The core tools of HealthVault are 100% free to use. We believe basic healthcare management should be accessible to everyone.', icon: Lock },
+    { title: 'Private Account Storage', desc: 'Documents are kept in private Supabase Storage and access is scoped to your signed-in account.', icon: EyeOff },
+    { title: 'AI-Assisted Analysis', desc: 'Gemini can extract medicine names, review bills, and simplify dense medical language. Always confirm important medical or financial decisions with a qualified professional.', icon: Zap },
+    { title: 'Owner-Scoped Access', desc: 'Supabase authentication, database Row Level Security, and Storage policies restrict records to their owner.', icon: Shield },
+    { title: 'Cross-Device Sync', desc: 'Sign in to access your timeline, insurance details, and analyzed documents from supported browsers.', icon: Smartphone },
+    { title: 'Free Core Tools', desc: 'The current core HealthVault tools are available without a subscription. File uploads support PDF, JPEG, PNG, and WebP files up to 10 MB.', icon: Lock },
   ]
 
   return (
@@ -16,26 +16,26 @@ export default function FeaturesPage() {
         <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900 mb-12 transition-colors">
           <ArrowLeft className="w-4 h-4" /> Back to Home
         </Link>
-        
+
         <div className="mb-16">
           <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4 tracking-tight">Platform Features</h1>
-          <p className="text-xl text-gray-500 max-w-2xl">Built with privacy, speed, and simplicity in mind.</p>
+          <p className="text-xl text-gray-500 max-w-2xl">Built to make health records easier to organize and understand.</p>
         </div>
 
         <div className="space-y-12">
-          {features.map((feat, i) => (
-            <div key={i} className="flex flex-col md:flex-row gap-6 items-start bg-white p-8 rounded-2xl shadow-sm border border-gray-200">
+          {features.map((feature) => (
+            <div key={feature.title} className="flex flex-col md:flex-row gap-6 items-start bg-white p-8 rounded-2xl shadow-sm border border-gray-200">
               <div className="bg-blue-50 p-4 rounded-xl shrink-0">
-                <feat.icon className="w-8 h-8 text-blue-600" />
+                <feature.icon className="w-8 h-8 text-blue-600" />
               </div>
               <div>
-                <h3 className="text-xl font-bold text-gray-900 mb-3">{feat.title}</h3>
-                <p className="text-gray-600 leading-relaxed text-base">{feat.desc}</p>
+                <h3 className="text-xl font-bold text-gray-900 mb-3">{feature.title}</h3>
+                <p className="text-gray-600 leading-relaxed text-base">{feature.desc}</p>
               </div>
             </div>
           ))}
         </div>
       </div>
     </div>
-  );
+  )
 }

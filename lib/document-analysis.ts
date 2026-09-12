@@ -68,7 +68,8 @@ export interface HealthDocument {
   id: string
   user_id: string
   document_type: AnalysisMode
-  file_url: string
+  storage_path: string | null
+  file_url: string | null
   ai_summary: string
   flagged_charges: unknown
   created_at: string
@@ -89,6 +90,7 @@ export interface InsurancePolicy {
   user_id: string
   provider_name: string
   policy_number: string
+  storage_path: string | null
   document_url: string | null
   created_at: string
 }
@@ -142,17 +144,20 @@ function parseStoredValue(value: unknown): unknown {
   }
 }
 
+export function pharmacySearchUrls(name: string): Pick<Medicine, 'tata1mg' | 'apollo'> {
+  const encodedName = encodeURIComponent(name)
+  return {
+    tata1mg: `https://www.1mg.com/search/all?name=${encodedName}`,
+    apollo: `https://www.apollopharmacy.in/search-medicines/${encodedName}`,
+  }
+}
+
 function normalizeMedicine(value: unknown): Medicine | null {
   const item = asRecord(value)
   if (!item) return null
   const name = asString(item.name).trim()
   if (!name) return null
-  const medicine: Medicine = { name }
-  const tata1mg = asString(item.tata1mg).trim()
-  const apollo = asString(item.apollo).trim()
-  if (tata1mg) medicine.tata1mg = tata1mg
-  if (apollo) medicine.apollo = apollo
-  return medicine
+  return { name, ...pharmacySearchUrls(name) }
 }
 
 function normalizeMedicines(value: unknown): Medicine[] {
@@ -245,30 +250,33 @@ export function normalizeAnalysisResponse(mode: AnalysisMode, value: unknown): A
   if (!record || record.type !== mode) return null
   const summary = asString(record.summary).trim()
   if (!summary) return null
+  const metadata = asRecord(record.metadata)
 
   if (mode === 'prescription') {
-    return { type: mode, summary, metadata: normalizeStoredMetadata(mode, record.items) }
+    return { type: mode, summary, metadata: normalizeStoredMetadata(mode, metadata?.items ?? record.items) }
   }
   if (mode === 'jargon') {
-    return { type: mode, summary, metadata: normalizeStoredMetadata(mode, record) }
+    return { type: mode, summary, metadata: normalizeStoredMetadata(mode, metadata ?? record) }
   }
   if (mode === 'bill') {
-    return { type: mode, summary, metadata: normalizeStoredMetadata(mode, record) }
+    return { type: mode, summary, metadata: normalizeStoredMetadata(mode, metadata ?? record) }
   }
-  return { type: mode, summary, metadata: normalizeStoredMetadata(mode, record) }
+  return { type: mode, summary, metadata: normalizeStoredMetadata(mode, metadata ?? record) }
 }
 
-export function metadataForStorage(result: AnalysisResult): unknown {
+export function metadataForStorage(result: AnalysisResult): import('@/types/database').Json {
   if (result.type === 'prescription') {
-    return (result.metadata as PrescriptionMetadata).items
+    return (result.metadata as PrescriptionMetadata).items as unknown as import('@/types/database').Json
   }
-  return result.metadata
+  return result.metadata as unknown as import('@/types/database').Json
 }
 
 export function isHealthDocument(value: unknown): value is HealthDocument {
   const record = asRecord(value)
   return Boolean(record && typeof record.id === 'string' && typeof record.user_id === 'string' &&
-    isAnalysisMode(record.document_type) && typeof record.file_url === 'string' &&
+    isAnalysisMode(record.document_type) &&
+    (typeof record.storage_path === 'string' || record.storage_path === null) &&
+    (typeof record.file_url === 'string' || record.file_url === null) &&
     typeof record.ai_summary === 'string' && typeof record.created_at === 'string')
 }
 
@@ -284,7 +292,9 @@ export function isInsurancePolicy(value: unknown): value is InsurancePolicy {
   const record = asRecord(value)
   return Boolean(record && typeof record.id === 'string' && typeof record.user_id === 'string' &&
     typeof record.provider_name === 'string' && typeof record.policy_number === 'string' &&
-    typeof record.created_at === 'string' && (typeof record.document_url === 'string' || record.document_url === null))
+    typeof record.created_at === 'string' &&
+    (typeof record.storage_path === 'string' || record.storage_path === null) &&
+    (typeof record.document_url === 'string' || record.document_url === null))
 }
 
 export function errorMessage(error: unknown, fallback: string): string {

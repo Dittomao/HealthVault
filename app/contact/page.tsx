@@ -1,7 +1,7 @@
-'use client'
+import Link from 'next/link'
+import { ArrowLeft, CircleHelp, Code2, MessageSquareWarning } from 'lucide-react'
 
-import Link from "next/link";
-import { ArrowLeft, Mail, MapPin, Phone } from "lucide-react";
+const issueTrackerUrl = 'https://github.com/Dittomao/HealthVault/issues'
 
 export default function ContactPage() {
   return (
@@ -10,75 +10,34 @@ export default function ContactPage() {
         <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-900 mb-12 transition-colors">
           <ArrowLeft className="w-4 h-4" /> Back to Home
         </Link>
-        
+
         <div className="mb-16">
-          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4 tracking-tight">Contact Us</h1>
-          <p className="text-xl text-gray-500 max-w-2xl">Have questions, feedback, or need support? We'd love to hear from you.</p>
+          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4 tracking-tight">Support</h1>
+          <p className="text-xl text-gray-500 max-w-2xl">Report a problem, request a feature, or review known issues through the project tracker.</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-          {/* Contact Form */}
-          <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-200">
-            <h2 className="text-2xl font-bold text-gray-900 mb-6">Send a Message</h2>
-            <form className="space-y-5" onSubmit={(e) => { e.preventDefault(); alert("Thanks for reaching out! We'll get back to you soon.") }}>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Name</label>
-                <input type="text" required className="w-full text-sm border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all" placeholder="John Doe" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Email</label>
-                <input type="email" required className="w-full text-sm border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all" placeholder="john@example.com" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Message</label>
-                <textarea required rows={5} className="w-full text-sm border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all resize-none" placeholder="How can we help you?"></textarea>
-              </div>
-              <button type="submit" className="w-full bg-gray-900 text-white px-6 py-3 rounded-lg text-sm font-semibold hover:bg-gray-800 transition-colors shadow-sm">
-                Send Message
-              </button>
-            </form>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-200 flex flex-col">
+            <div className="bg-gray-900 w-12 h-12 rounded-xl flex items-center justify-center mb-6">
+              <Code2 className="w-6 h-6 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-3">GitHub Issue Tracker</h2>
+            <p className="text-gray-600 mb-8 leading-relaxed flex-1">This is the currently available support channel. Before posting, avoid including medical documents, account credentials, API keys, or other sensitive personal information.</p>
+            <a href={issueTrackerUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 w-full bg-gray-900 text-white px-6 py-3 rounded-lg text-sm font-semibold hover:bg-gray-800 transition-colors shadow-sm">
+              <CircleHelp className="w-4 h-4" /> Open Issue Tracker
+            </a>
           </div>
 
-          {/* Contact Info */}
-          <div className="space-y-8">
-            <div className="flex items-start gap-4">
-              <div className="bg-blue-50 p-3 rounded-xl shrink-0 text-blue-600">
-                <Mail className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-gray-900 mb-1">Email Us</h3>
-                <p className="text-gray-500 mb-2">For general inquiries and support.</p>
-                <a href="mailto:support@healthvault.example.com" className="text-blue-600 font-medium hover:underline">support@healthvault.example.com</a>
-              </div>
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-200 flex flex-col">
+            <div className="bg-blue-50 w-12 h-12 rounded-xl flex items-center justify-center mb-6 text-blue-600">
+              <MessageSquareWarning className="w-6 h-6" />
             </div>
-
-            <div className="flex items-start gap-4">
-              <div className="bg-blue-50 p-3 rounded-xl shrink-0 text-blue-600">
-                <MapPin className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-gray-900 mb-1">Visit Us</h3>
-                <p className="text-gray-500">
-                  123 HealthVault Plaza, Suite 400<br/>
-                  Innovation District<br/>
-                  Bengaluru, KA 560001
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-4">
-              <div className="bg-blue-50 p-3 rounded-xl shrink-0 text-blue-600">
-                <Phone className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-gray-900 mb-1">Call Us</h3>
-                <p className="text-gray-500 mb-2">Mon-Fri from 9am to 6pm IST.</p>
-                <a href="tel:+918000000000" className="text-blue-600 font-medium hover:underline">+91 8000 000 000</a>
-              </div>
-            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-3">Direct Contact</h2>
+            <p className="text-gray-600 leading-relaxed">Email, phone, postal support, and private message delivery are not configured yet. HealthVault will not claim that a message was sent when no delivery service is connected.</p>
+            <div className="mt-8 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">For urgent medical concerns, contact a qualified healthcare professional or local emergency service—not the issue tracker.</div>
           </div>
         </div>
       </div>
     </div>
-  );
+  )
 }

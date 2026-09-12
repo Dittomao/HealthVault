@@ -9,8 +9,17 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    ".vercel/**",
     "out/**",
     "build/**",
+    "coverage/**",
+    "playwright-report/**",
+    "test-results/**",
+    "dashboard_backup.tsx",
+    "login_backup.tsx",
+    "fix-api*.js",
+    "fix-ui.js",
+    "test-genai.js",
     "next-env.d.ts",
   ]),
   {
